@@ -1,0 +1,4 @@
+[submodule "maia/vendor/lila"]
+	path = maia/vendor/lila
+	url = https://github.com/lichess-org/lila.git
+	shallow = true
