@@ -1,6 +1,12 @@
+$c-primary: #759900;
+$c-primary-hover: #86b83b;
+$c-bg-page: #eee;
+$c-bg-box: #fff;
+$c-border: #ddd;
+
 :root {
   color: #555;
-  background: #eee;
+  background: $c-bg-page;
   font-family: "Helvetica Neue", Arial, sans-serif;
   font-size: 14px;
 }
@@ -16,7 +22,7 @@ body {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: linear-gradient(#e6e4e2, #f3f3f3 135px, #eee);
+  background: linear-gradient(#e6e4e2, #f3f3f3 135px, $c-bg-page);
 }
 
 .game-shell {
@@ -58,7 +64,7 @@ body {
   place-items: center;
   border-radius: 4px;
   color: #333;
-  background: #fff;
+  background: $c-bg-box;
   box-shadow: 0 1px 3px #0003;
   font-size: 23px;
 }
@@ -189,8 +195,9 @@ body.blindfold #board piece {
   display: none;
 }
 
-.promotion button {
+.promotion square {
   position: absolute;
+  display: block;
   width: 12.5%;
   height: 12.5%;
   margin: 0;
@@ -201,10 +208,10 @@ body.blindfold #board piece {
   transition: border-radius 150ms, box-shadow 150ms;
 }
 
-.promotion button:hover:not(:disabled) {
+.promotion square:hover {
   border-radius: 0;
   background: #b0b0b0;
-  box-shadow: inset 0 0 48px 8px #759900;
+  box-shadow: inset 0 0 48px 8px $c-primary;
 }
 
 .promotion piece {
@@ -217,7 +224,7 @@ body.blindfold #board piece {
   transition: transform 150ms;
 }
 
-.promotion button:hover piece {
+.promotion square:hover piece {
   transform: none;
 }
 
@@ -228,8 +235,23 @@ body.blindfold #board piece {
   flex-direction: column;
   border-radius: 0 6px 6px 0;
   overflow: hidden;
-  background: #fff;
+  background: $c-bg-box;
   box-shadow: 0 2px 7px #0003;
+}
+
+.game-shell.analysis {
+  grid-template-columns: auto 390px;
+}
+
+.game-shell.analysis .board-side {
+  width: min(calc(100vh - 180px), calc(100vw - 450px), 760px);
+}
+
+.replay {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .game-panel > header {
@@ -238,7 +260,7 @@ body.blindfold #board piece {
   align-items: center;
   gap: 12px;
   padding: 13px 16px;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid $c-border;
 }
 
 .game-panel > header > span {
@@ -274,7 +296,7 @@ body.blindfold #board piece {
   scrollbar-width: thin;
 }
 
-.move-list > span,
+.move-list > qZM,
 .move-list .move {
   min-height: 34px;
   display: flex;
@@ -283,6 +305,8 @@ body.blindfold #board piece {
 }
 
 .move-list .move {
+  display: flex;
+  align-items: center;
   border-radius: 0;
   color: #555;
   background: #fff;
@@ -293,7 +317,7 @@ body.blindfold #board piece {
 
 .move-list .move:hover:not(:disabled) {
   color: #fff;
-  background: #759900;
+  background: $c-primary;
 }
 
 .move-list .move.active,
@@ -394,7 +418,7 @@ body.blindfold #board piece {
   display: grid;
   grid-template-columns: 1fr 1fr;
   padding: 5px;
-  border-bottom: 2px solid #759900;
+  border-bottom: 2px solid $c-primary;
   background: #f5f5f5;
   box-shadow: inset 0 5px 12px #0001;
 }
@@ -442,7 +466,7 @@ body.blindfold #board piece {
   width: 30px;
   height: 17px;
   margin: 0;
-  accent-color: #759900;
+  accent-color: $c-primary;
 }
 
 .game-actions {
@@ -514,7 +538,7 @@ body.blindfold #board piece {
   background: #759900;
 }
 
-.game-panel footer {
+.game-panel > footer {
   padding: 12px 14px 14px;
   background: #f5f5f5;
 }
@@ -548,11 +572,508 @@ button {
   cursor: pointer;
 }
 
-#new-game {
+.footer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.footer-actions button {
   width: 100%;
   padding: 10px 15px;
   box-shadow: 0 2px 4px #0002;
   font-size: 12px;
+}
+
+#analyse-pgn,
+#replace-pgn {
+  color: #666;
+  background: linear-gradient(#fff, #e5e5e5);
+}
+
+#analyse-pgn:hover:not(:disabled),
+#replace-pgn:hover:not(:disabled) {
+  color: #333;
+  background: linear-gradient(#fff, #ddd);
+}
+
+.analysis-panel.analyse__tools {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid $c-border;
+  background: $c-bg-box;
+}
+
+.analyse__tools .analyse__moves {
+  min-height: 86px;
+  flex: 2 1 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-bottom: 1px solid #ccc;
+  user-select: none;
+}
+
+// Adapted from lila/ui/lib/css/tree/_tree.scss and analyse/treeView/columnView.ts.
+.analysis-tree {
+  width: 100%;
+  min-height: 100%;
+}
+
+.tview2 {
+  color: #555;
+  white-space: normal;
+}
+
+.tview2 * {
+  overflow: visible;
+}
+
+.tview2 move {
+  display: inline-block;
+  overflow: hidden;
+  padding: 0.25em 0.17em;
+  color: #555;
+  font-size: 1.092em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tview2 move.active {
+  color: #fff;
+  background: $c-primary;
+  font-weight: 700;
+}
+
+.tview2 move.nongame {
+  font-style: italic;
+}
+
+.tview2 move.empty {
+  color: #aaa;
+  pointer-events: none;
+}
+
+.tview2 move index {
+  margin-right: 3px;
+  color: #888;
+  font-size: 90%;
+}
+
+.tview2 move.active index {
+  color: #fff;
+}
+
+.tview2 line {
+  position: relative;
+  display: block;
+  padding-left: 7px;
+}
+
+.tview2 line > branch {
+  position: absolute;
+  width: 8px;
+  height: 100%;
+  margin-left: -9px;
+  border-left: 2px solid #9aaf78;
+}
+
+.tview2 line > branch::after {
+  position: absolute;
+  width: 7px;
+  height: 2px;
+  margin-top: calc(1.15em - 2px);
+  border-top: 2px solid #9aaf78;
+  content: "";
+}
+
+.tview2 line:last-child > branch {
+  height: 1.15em;
+}
+
+.tview2 lines {
+  display: block;
+  margin-block: 2px;
+  padding-left: 2px;
+  overflow-x: clip;
+}
+
+.tview2 lines lines move {
+  font-size: 13px;
+}
+
+.tview2-column {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.tview2-column move {
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.tview2-column > move {
+  min-height: 32px;
+  flex: 0 0 43.5%;
+  display: flex;
+  align-items: center;
+  padding: 0 0.3em 0 0.5em;
+  border-radius: 0;
+  font-size: 1.185em;
+  line-height: 1.75em;
+}
+
+.tview2-column > index {
+  min-height: 32px;
+  flex: 0 0 13%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid #ddd;
+  color: #999;
+  background: #eee;
+  line-height: 2.07em;
+}
+
+.tview2-column > interrupt {
+  max-width: 100%;
+  flex: 0 0 100%;
+  border-top: 1px solid #b8c7a1;
+  border-bottom: 1px solid #b8c7a1;
+  background: #f1f3ed;
+}
+
+.tview2 move:focus {
+  outline: 2px solid #75990066;
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .tview2 move:not(.active):hover {
+    color: #333;
+    background: #e2e8d9;
+  }
+}
+
+// Adapted from lila/ui/lib/css/ceval/_ctrl.scss.
+.analyse__tools .ceval {
+  position: relative;
+  min-height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 3px;
+  border-bottom: 1px solid #ccc;
+  background: linear-gradient(#f8f8f8, #e8e8e8);
+}
+
+.analyse__tools .ceval pearl {
+  min-width: 70px;
+  flex: 0 0 70px;
+  color: #444;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 40px;
+  text-align: center;
+}
+
+.analyse__tools .ceval .engine {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #777;
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.analyse__tools .ceval .engine > div:first-child {
+  color: #555;
+  font-weight: 600;
+}
+
+.analyse__tools .ceval .info {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analyse__tools .ceval > .bar {
+  position: absolute;
+  inset: 0 0 auto;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+}
+
+.analyse__tools .ceval > .bar span {
+  height: 3px;
+  display: block;
+  background: #7fae2e;
+  transition: width 1s;
+}
+
+.analyse__tools .ceval.computing > .bar span {
+  background: repeating-linear-gradient(110deg, #7fae2e 0 16px, #9bc64a 16px 30px);
+  background-size: 200% 100%;
+  animation: ceval-bar 1.2s linear infinite;
+}
+
+icon.ddloader {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  border: 3px solid #ccc;
+  border-top-color: $c-primary;
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: spin 0.8s linear infinite;
+}
+
+.ceval pearl icon.ddloader {
+  margin-top: 10px;
+}
+
+// Adapted from lila/ui/analyse/css/explorer/_explorer.scss.
+.analyse__tools .explorer-box {
+  position: relative;
+  min-height: 0;
+  flex: 3 1 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: #555;
+  background: #fff;
+  font-size: 0.9em;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+
+.explorer-box .overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: none;
+  cursor: progress;
+}
+
+.explorer-box.loading .overlay {
+  display: block;
+}
+
+.explorer-box tbody {
+  transition: opacity 150ms;
+}
+
+.explorer-box.loading tbody {
+  opacity: 0.4;
+}
+
+.explorer-box .data {
+  min-height: 100%;
+}
+
+.explorer-box .data.empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer-box .explorer-title {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  min-height: 27px;
+  display: flex;
+  align-items: stretch;
+  color: #777;
+  background: #e1e1e1;
+  font-size: 0.9rem;
+  line-height: 27px;
+}
+
+.explorer-box .explorer-title .active {
+  padding: 0 7px;
+  color: #555;
+  background: #d5d5d5;
+}
+
+.explorer-box .explorer-title strong {
+  margin-right: 0.5ch;
+}
+
+.explorer-box .explorer-title .legal {
+  margin-left: auto;
+  padding-right: 8px;
+  color: #888;
+  font-size: 11px;
+}
+
+.explorer-box table.moves {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  will-change: transform, opacity;
+}
+
+.explorer-box .moves th {
+  padding: 0 5px;
+  color: #777;
+  background: #d5d5d5;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 22px;
+  text-align: left;
+}
+
+.explorer-box .moves th:nth-child(2),
+.explorer-box .moves th:nth-child(3) {
+  text-align: right;
+}
+
+.explorer-box .moves th:first-child { width: 24%; }
+.explorer-box .moves th:nth-child(2) { width: 22%; }
+.explorer-box .moves th:nth-child(3) { width: 17%; }
+.explorer-box .moves th:last-child { width: 37%; }
+
+.explorer-box .moves tr:nth-child(even) {
+  background: #f4f4f4;
+}
+
+.explorer-box .moves tbody tr[data-uci] {
+  cursor: pointer;
+}
+
+.explorer-box .moves tbody tr[data-uci]:hover,
+.explorer-box .moves tbody tr[data-uci]:focus {
+  outline: none;
+  background: #e7eff8;
+}
+
+.explorer-box .moves tbody tr.played {
+  background: #e8f0dc;
+  box-shadow: inset 3px 0 $c-primary;
+}
+
+.explorer-box .moves tbody tr.continuation:not(.played) {
+  background: #e7eff8;
+  box-shadow: inset 3px 0 #3d75a3;
+}
+
+.explorer-box .moves td {
+  height: 30px;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.explorer-box .moves td:first-child {
+  padding-left: 7px;
+  color: #444;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.explorer-box .moves td:nth-child(2),
+.explorer-box .moves td:nth-child(3),
+.explorer-box .moves td.eval {
+  color: #777;
+  font-size: 10px;
+  text-align: right;
+}
+
+.explorer-box .moves td.eval {
+  color: #555;
+  font-weight: 700;
+}
+
+.explorer-box .move-san em {
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: #fff;
+  background: $c-primary;
+  font-size: 8px;
+  font-style: normal;
+  vertical-align: 1px;
+}
+
+.explorer-box .move-san em.line {
+  background: #3d75a3;
+}
+
+.explorer-box .moves td:last-child {
+  padding-right: 7px;
+}
+
+.explorer-box .maia-bar {
+  width: 100%;
+  display: flex;
+}
+
+.explorer-box .maia-bar span {
+  height: 14px;
+  display: inline-block;
+  overflow: hidden;
+  border: 1px solid #9994;
+  transition: width 1s;
+}
+
+.explorer-box .maia-bar .maia {
+  border-radius: 3px 0 0 3px;
+  background: #8eb641;
+  box-shadow: inset 0 -4px 6px #0002;
+}
+
+.explorer-box .maia-bar .remainder {
+  border-left: 0;
+  border-radius: 0 3px 3px 0;
+  background: #ddd;
+}
+
+.explorer-box .moves tr.sum {
+  position: sticky;
+  bottom: 0;
+  background: #e5ecd9;
+  font-weight: 700;
+}
+
+.explorer-box .moves tr.sum td {
+  cursor: default;
+}
+
+.explorer-box .message {
+  min-height: 125px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #888;
+  font-style: italic;
+  text-align: center;
+}
+
+.analysis-error,
+.pgn-error {
+  color: #a33;
+  background: #fee;
+}
+
+.analysis-error {
+  margin: 8px !important;
+  padding: 9px;
+  border-radius: 3px;
+  white-space: normal;
 }
 
 button:hover:not(:disabled) {
@@ -575,8 +1096,101 @@ button:disabled {
   box-shadow: 0 8px 32px #0006;
 }
 
-.keyboard-help::backdrop {
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
   background: #0008;
+}
+
+.pgn-dialog {
+  width: min(92vw, 680px);
+  max-height: 92vh;
+  overflow: hidden;
+  border-radius: 7px;
+  color: #555;
+  background: #fff;
+  box-shadow: 0 8px 32px #0006;
+}
+
+.pgn-dialog > header {
+  display: flex;
+  align-items: center;
+  padding: 15px 17px;
+  border-bottom: 1px solid #ddd;
+}
+
+.pgn-dialog h2,
+.pgn-dialog p {
+  margin: 0;
+}
+
+.pgn-dialog h2 {
+  font-size: 19px;
+}
+
+.pgn-dialog header p {
+  margin-top: 4px;
+  color: #999;
+  font-size: 12px;
+}
+
+.pgn-dialog header button {
+  width: 34px;
+  height: 34px;
+  margin-left: auto;
+  color: #777;
+  background: transparent;
+  box-shadow: none;
+  font-size: 24px;
+}
+
+.pgn-dialog textarea {
+  width: calc(100% - 34px);
+  min-height: 310px;
+  max-height: 55vh;
+  margin: 17px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  color: #333;
+  background: #fbfbfb;
+  font: 13px/1.55 Consolas, "Courier New", monospace;
+}
+
+.pgn-dialog textarea:focus {
+  border-color: $c-primary;
+  outline: 2px solid #75990033;
+}
+
+.pgn-error {
+  margin: 0 17px 12px !important;
+  padding: 8px 10px;
+  border-radius: 3px;
+}
+
+.pgn-dialog > footer {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 12px 17px;
+  border-top: 1px solid #ddd;
+  background: #f5f5f5;
+}
+
+.pgn-dialog footer small {
+  max-width: 440px;
+  color: #888;
+  line-height: 1.35;
+}
+
+.pgn-dialog footer button {
+  min-width: 120px;
+  margin-left: auto;
+  padding: 10px 14px;
 }
 
 .keyboard-help header {
@@ -662,6 +1276,31 @@ body.zen .player {
   from { background: #dce9c9; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ceval-bar {
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 900px) and (min-width: 851px) {
+  .game-shell.analysis {
+    display: block;
+    width: min(100%, 760px);
+  }
+
+  .game-shell.analysis .board-side {
+    width: min(calc(100vh - 180px), 100%, 760px);
+  }
+
+  .game-shell.analysis .game-panel {
+    height: 700px;
+    margin-top: 8px;
+    border-radius: 5px;
+  }
+}
+
 @media (max-width: 850px) {
   body {
     display: block;
@@ -679,11 +1318,27 @@ body.zen .player {
     min-width: 0;
   }
 
+  .game-shell.analysis .board-side {
+    width: 100%;
+  }
+
   .game-panel {
     height: auto;
     min-height: 220px;
     margin-top: 8px;
     border-radius: 5px;
+  }
+
+  .analysis-panel.analyse__tools {
+    height: 430px;
+    min-height: 430px;
+    max-height: 430px;
+    flex: 0 0 430px;
+  }
+
+  .analyse__tools .analyse__moves {
+    min-height: 125px;
+    flex: 0 0 125px;
   }
 
   .game-panel > header {
@@ -706,7 +1361,7 @@ body.zen .player {
     display: none;
   }
 
-  .move-list > span,
+  .move-list > qZM,
   .move-list .move {
     min-width: 42px;
     min-height: 52px;
@@ -800,5 +1455,19 @@ body.zen .player {
 
   .keyboard-help dl div {
     grid-template-columns: 135px 1fr;
+  }
+
+  .pgn-dialog textarea {
+    min-height: 230px;
+  }
+
+  .pgn-dialog > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pgn-dialog footer button {
+    width: 100%;
+    margin: 0;
   }
 }

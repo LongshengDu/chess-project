@@ -6,15 +6,45 @@ import chess.engine
 import chess.pgn
 from flask import Flask, request
 
+if __package__:
+    from .analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
+else:
+    from analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MAIA_CACHE_DIR = PROJECT_ROOT / "backend" / ".cache" / "maia3"
+MODEL_NAME = "maia3-5m"
+STOCKFISH_PATH = (
+    PROJECT_ROOT / "deps" / "stockfish" / "stockfish-windows-x86-64-avx2.exe"
+)
 
 ENGINE_COMMAND = [
     "maia3-uci",
     "--model",
-    "maia3-5m",
+    MODEL_NAME,
+    "--cache-dir",
+    str(MAIA_CACHE_DIR),
+    "--local-files-only",
     "--use-uci-history",
     "--elo",
     "1500",
 ]
+
+MODEL_CACHE_COMMAND = [
+    "maia3-cache",
+    "--model",
+    MODEL_NAME,
+    "--cache-dir",
+    str(MAIA_CACHE_DIR),
+]
+
+
+def ensure_model_cached() -> None:
+    MAIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if any(MAIA_CACHE_DIR.rglob(f"{MODEL_NAME}.pt")):
+        return
+    subprocess.run(MODEL_CACHE_COMMAND, check=True)
 
 PIECES = [
     (chess.QUEEN, "queen", 9),
@@ -89,7 +119,10 @@ class ChessApi:
         return self._state()
 
     def _close(self) -> None:
-        self._engine.quit()
+        try:
+            self._engine.quit()
+        except chess.engine.EngineTerminatedError:
+            pass
 
     def _game_over(self) -> bool:
         return bool(
@@ -240,9 +273,11 @@ class ChessApi:
 
 
 def main() -> None:
-    dist = Path(__file__).parent / "web" / "dist"
+    dist = PROJECT_ROOT / "web" / "dist"
     if not (dist / "index.html").exists():
-        raise SystemExit("Frontend not built. Run: npm install && npm run build")
+        raise SystemExit("Frontend not built. Run: cd web && pnpm install && pnpm run build")
+
+    ensure_model_cached()
 
     server = Flask(__name__, static_folder=str(dist), static_url_path="")
     popen_args = (
@@ -251,6 +286,10 @@ def main() -> None:
         else {}
     )
     game = ChessApi(chess.engine.SimpleEngine.popen_uci(ENGINE_COMMAND, **popen_args))
+    pgn_analysis = PgnAnalysisApi(
+        MaiaPolicy(MODEL_NAME, MAIA_CACHE_DIR),
+        StockfishScorer(STOCKFISH_PATH),
+    )
 
     @server.get("/")
     def index():
@@ -274,6 +313,39 @@ def main() -> None:
     def new_game():
         return game.new_game()
 
+    @server.post("/api/analysis/pgn")
+    def import_pgn():
+        data = request.get_json(silent=True) or {}
+        return pgn_analysis.import_pgn(str(data.get("pgn", "")))
+
+    @server.post("/api/analysis/position")
+    def analyse_position():
+        data = request.get_json(silent=True) or {}
+        try:
+            ply = int(data.get("ply", -1))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Invalid PGN position") from error
+        variation_moves = data.get("moves", [])
+        if not isinstance(variation_moves, list):
+            raise ValueError("Invalid variation path")
+        return pgn_analysis.analyse_position(ply, [str(move) for move in variation_moves])
+
+    @server.post("/api/analysis/move")
+    def analysis_move():
+        data = request.get_json(silent=True) or {}
+        try:
+            ply = int(data.get("ply", -1))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Invalid PGN position") from error
+        variation_moves = data.get("moves", [])
+        if not isinstance(variation_moves, list):
+            raise ValueError("Invalid variation path")
+        return pgn_analysis.play_variation_move(
+            ply,
+            [str(move) for move in variation_moves],
+            str(data.get("uci", "")),
+        )
+
     @server.errorhandler(ValueError)
     def invalid_action(error):
         return {"error": str(error)}, 400
@@ -281,7 +353,10 @@ def main() -> None:
     try:
         server.run(host="127.0.0.1", port=5000, threaded=False)
     finally:
-        game._close()
+        try:
+            pgn_analysis.close()
+        finally:
+            game._close()
 
 
 if __name__ == "__main__":

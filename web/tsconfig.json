@@ -7,5 +7,5 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["web"]
+  "include": ["**/*.ts"]
 }
