@@ -189,7 +189,7 @@ dependencies = [
 requires-dist = [
     { name = "flask", specifier = ">=3.1,<4" },
     { name = "ipykernel", specifier = ">=7.3.0" },
-    { name = "maia3", git = "https://github.com/CSSLab/maia3.git?rev=1e13597c42d4858b7cfd7cfdae01e297263364b2" },
+    { name = "maia3", directory = "deps/maia" },
     { name = "python-chess", specifier = "==1.999" },
     { name = "stockfish", specifier = ">=5.2.0" },
 ]
@@ -638,12 +638,20 @@ wheels = [
 [[package]]
 name = "maia3"
 version = "0.1.0"
-source = { git = "https://github.com/CSSLab/maia3.git?rev=1e13597c42d4858b7cfd7cfdae01e297263364b2#1e13597c42d4858b7cfd7cfdae01e297263364b2" }
+source = { directory = "deps/maia" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "python-chess" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "huggingface-hub", specifier = ">=0.23" },
+    { name = "numpy" },
     { name = "python-chess" },
     { name = "torch" },
 ]

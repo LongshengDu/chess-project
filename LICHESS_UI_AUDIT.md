@@ -1,7 +1,7 @@
 # Lichess round UI audit
 
 This app is compared against the official `lichess-org/lila` source pinned as
-the Git submodule `vendor/lila` at commit
+the Git submodule `deps/lichess-lila` at commit
 `f4da67dc45bba6769600db33af925c05ae21a8d0`.
 
 The upstream round controller cannot run independently: it expects Lichess

@@ -1,4 +1,8 @@
-[submodule "maia/vendor/lila"]
-	path = maia/vendor/lila
+[submodule "deps/lichess-lila"]
+	path = deps/lichess-lila
 	url = https://github.com/lichess-org/lila.git
+	shallow = true
+[submodule "deps/maia"]
+	path = deps/maia
+	url = https://github.com/CSSLab/maia3.git
 	shallow = true

@@ -3,10 +3,10 @@ import type { Key, Role } from '@lichess-org/chessground/types';
 import '@lichess-org/chessground/assets/chessground.base.css';
 import '@lichess-org/chessground/assets/chessground.brown.css';
 import '@lichess-org/chessground/assets/chessground.cburnett.css';
-import captureUrl from '../vendor/lila/public/sound/standard/Capture.mp3?url';
-import checkUrl from '../vendor/lila/public/sound/standard/Check.mp3?url';
-import checkmateUrl from '../vendor/lila/public/sound/standard/Checkmate.mp3?url';
-import moveUrl from '../vendor/lila/public/sound/standard/Move.mp3?url';
+import captureUrl from '../deps/lichess-lila/public/sound/standard/Capture.mp3?url';
+import checkUrl from '../deps/lichess-lila/public/sound/standard/Check.mp3?url';
+import checkmateUrl from '../deps/lichess-lila/public/sound/standard/Checkmate.mp3?url';
+import moveUrl from '../deps/lichess-lila/public/sound/standard/Move.mp3?url';
 import './style.css';
 
 type Color = 'white' | 'black';
