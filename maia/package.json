@@ -1,0 +1,18 @@
+{
+  "name": "maia-local-web-chess",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build web"
+  },
+  "dependencies": {
+    "@lichess-org/chessground": "10.1.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
