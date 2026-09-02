@@ -19,6 +19,15 @@ TOP_HUMAN_MOVES = 10
 STOCKFISH_DEPTH = 12
 
 
+def _move_sounds(board: chess.Board, captured: bool) -> list[str]:
+    sounds = ["capture" if captured else "move"]
+    if board.is_checkmate():
+        sounds.append("checkmate")
+    elif board.is_check():
+        sounds.append("check")
+    return sounds
+
+
 def _material(board: chess.Board) -> dict:
     pieces = [
         (chess.QUEEN, "queen", 9),
@@ -47,7 +56,7 @@ def _material(board: chess.Board) -> dict:
 def _position_state(
     board: chess.Board,
     last_move: chess.Move | None,
-    sound: str | None,
+    move_sounds: list[str],
 ) -> dict:
     dests: dict[str, list[str]] = {}
     promotions: dict[str, list[str]] = {}
@@ -82,7 +91,7 @@ def _position_state(
         ),
         "check": board.is_check(),
         "material": _material(board),
-        "sound": sound,
+        "moveSounds": move_sounds,
         "ply": board.ply(),
         "dests": dests,
         "promotions": promotions,
@@ -250,7 +259,7 @@ class PgnAnalysisApi:
 
         board = game.board()
         boards = [board.copy(stack=True)]
-        positions = [_position_state(board, None, None)]
+        positions = [_position_state(board, None, [])]
         moves: list[chess.Move] = []
         uci_moves: list[str] = []
         san_moves: list[str] = []
@@ -259,19 +268,12 @@ class PgnAnalysisApi:
             san_moves.append(board.san(move))
             captured = board.is_capture(move)
             board.push(move)
-            sound = (
-                "checkmate"
-                if board.is_checkmate()
-                else "check"
-                if board.is_check()
-                else "capture"
-                if captured
-                else "move"
-            )
             moves.append(move)
             uci_moves.append(move.uci())
             boards.append(board.copy(stack=True))
-            positions.append(_position_state(board, move, sound))
+            positions.append(
+                _position_state(board, move, _move_sounds(board, captured))
+            )
 
         headers = game.headers
         white = headers.get("White", "White")
@@ -357,19 +359,12 @@ class PgnAnalysisApi:
         san = board.san(move)
         captured = board.is_capture(move)
         board.push(move)
-        sound = (
-            "checkmate"
-            if board.is_checkmate()
-            else "check"
-            if board.is_check()
-            else "capture"
-            if captured
-            else "move"
-        )
         return {
             "uci": move.uci(),
             "san": san,
-            "position": _position_state(board, move, sound),
+            "position": _position_state(
+                board, move, _move_sounds(board, captured)
+            ),
         }
 
     def close(self) -> None:

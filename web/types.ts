@@ -11,10 +11,12 @@ export type PositionState = {
   lastMove: Key[] | null;
   check: boolean;
   material: Material;
-  sound: MoveSound | null;
+  moveSounds: MoveSound[];
 };
 
 export type RoundState = PositionState & {
+  modelName: string;
+  modelElo: number;
   gameOver: boolean;
   result: string | null;
   status: string;

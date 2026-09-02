@@ -23,8 +23,8 @@ behavior to the small Flask/python-chess state contract.
 | Flip, zen, board menu, help shortcuts | `ui/round/src/keyboard.ts`, `view/boardMenu.ts` | F, Z, H, ?, Escape plus menu UI | Implemented |
 | Exact promotion geometry and order | `ui/lib/src/game/promotion.ts`, `ui/lib/css/chess/_promotion.scss` | Adapted Snabbdom promotion view in `web/lila/promotion.ts` | Implemented |
 | Relative captured pieces and `+N` value | `ui/lib/src/game/material.ts`, `ui/lib/src/game/view/material.ts`, `ui/round/css/_material.scss` | Python computes role-count differences and 9/5/3/3/1 score for every replay ply; Cburnett mini-pieces render above/below board | Implemented |
-| Player rows and turn indication | `ui/round/src/view/user.ts`, `view/table.ts`, `view/clock.ts` | Maia 1500 / Maia3-5M and You / White rows; active untimed `∞` clock follows the live turn | Implemented |
-| Move/capture/check/checkmate sounds and sound toggle | `ui/round/src/ctrl.ts`, `public/sound/standard` | Official pinned Lichess MP3 assets imported by Vite; Python labels move events | Implemented |
+| Player rows and turn indication | `ui/round/src/view/user.ts`, `view/table.ts`, `view/clock.ts` | Maia 1500 / configured `MODEL_NAME` and You / White rows; active untimed `∞` clock follows the live turn | Implemented |
+| Move/capture/check/checkmate sounds and sound toggle | `ui/round/src/ctrl.ts`, `ui/site/src/sound.ts`, `public/sound/standard` | Official pinned Lichess MP3 assets; Python emits Lila's base move/capture plus optional check/mate sequence, while separate human and Maia responses preserve move-by-move timing | Implemented |
 | Board preferences | `ui/round/src/view/boardMenu.ts` | Flip, zen, blindfold, coordinates, sound, PGN copy, persistent local preferences | Implemented |
 | Takeback, claim draw, resign confirmation | `ui/round/src/view/table.ts`, `view/button.ts` | Local action route; Python pops a human/Maia pair, validates draw claims, or records resignation | Implemented |
 | Result and termination text in notation | `ui/round/src/view/replay.ts` | Result plus checkmate/stalemate/material/repetition/rule/resignation reason | Implemented |

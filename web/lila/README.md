@@ -24,3 +24,13 @@ its `analyse__tools` / `ceval` / `analyse__moves` / `explorer-box` /
 `table.moves` composition plus its explorer-row-to-`paleBlue`-Chessground-arrow
 interaction. Candidate clicks and legal Chessground moves enter the local Lila-style
 tree; Python validates and returns every new variation node.
+
+Live-game sound timing follows `ui/round/src/ctrl.ts`: the local move sound is
+played before the later opponent move sound. Unlike Lila's socket-backed game,
+the local app gets both sound classifications from two small Python responses,
+so captures and checks remain authoritative without importing Lila's site-wide
+sound runtime or duplicating chess rules in TypeScript.
+Each ply follows Lila's base-plus-modifier sequence: move or capture first, then
+check or checkmate 100 ms later. The standard check is intentionally silent;
+checkmate uses the standard notification sound. A checking capture therefore
+still plays its capture sound instead of being collapsed into silence.

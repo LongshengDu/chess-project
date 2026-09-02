@@ -6,6 +6,8 @@ import { h, onInsert } from '../snabbdom';
 import { renderScore } from './eval';
 
 export interface AnalysisToolsOpts {
+  modelName: string;
+  modelElo: number;
   result?: PositionAnalysis;
   moves: VNode;
   loading: boolean;
@@ -93,7 +95,7 @@ function showMoveTable(opts: AnalysisToolsOpts, result: PositionAnalysis): VNode
     h('thead', [
       h('tr', [
         h('th', 'Move'),
-        h('th', { attrs: { colspan: 2 } }, 'Maia 1500'),
+        h('th', { attrs: { colspan: 2 } }, `${opts.modelName} ${opts.modelElo}`),
         h('th', 'Stockfish'),
         h('th', 'Probability'),
       ]),
@@ -137,16 +139,17 @@ function renderCeval(opts: AnalysisToolsOpts): VNode {
           ? opts.loadingText ?? 'Analysing…'
           : opts.result
             ? `Stockfish · depth ${depth ?? '—'} · ${turn} POV`
-            : 'Maia3-5M · 1500 Elo',
+            : `${opts.modelName} · ${opts.modelElo} Elo`,
       ),
     ]),
     h('div.bar', [h('span', { attrs: { style: `width: ${opts.loading ? 100 : 0}%` } })]),
   ]);
 }
 
-function explorerTitle(result?: PositionAnalysis): VNode {
+function explorerTitle(opts: AnalysisToolsOpts): VNode {
+  const result = opts.result;
   return h('div.explorer-title', [
-    h('span.active.maia', [h('strong', `Maia ${result?.elo ?? 1500}`), ' human moves']),
+    h('span.active.maia', [h('strong', `${opts.modelName} ${result?.elo ?? opts.modelElo}`), ' human moves']),
     result && h('span.legal', `${result.legalMoveCount} legal`),
   ]);
 }
@@ -165,9 +168,9 @@ export function renderAnalysisTools(opts: AnalysisToolsOpts): VNode {
           h('div.overlay', { attrs: { 'aria-hidden': 'true' } }),
           opts.error && h('p.analysis-error', opts.error),
           opts.result
-            ? h('div.data', [explorerTitle(opts.result), showMoveTable(opts, opts.result)])
+            ? h('div.data', [explorerTitle(opts), showMoveTable(opts, opts.result)])
             : h('div.data.empty', [
-                explorerTitle(),
+                explorerTitle(opts),
                 h('div.message', [
                   opts.error
                     ? h('strong', 'Analysis unavailable')

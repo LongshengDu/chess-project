@@ -5,16 +5,18 @@ import chess
 import chess.engine
 import chess.pgn
 from flask import Flask, request
+from maia3.model_registry import resolve_model_spec
 
 if __package__:
-    from .analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
+    from .analysis import MAIA_ELO, MaiaPolicy, PgnAnalysisApi, StockfishScorer
 else:
-    from analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
+    from analysis import MAIA_ELO, MaiaPolicy, PgnAnalysisApi, StockfishScorer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MAIA_CACHE_DIR = PROJECT_ROOT / "backend" / ".cache" / "maia3"
-MODEL_NAME = "maia3-5m"
+MODEL_NAME = "maia3-79m"
+MODEL_SPEC = resolve_model_spec(MODEL_NAME)
 STOCKFISH_PATH = (
     PROJECT_ROOT / "deps" / "stockfish" / "stockfish-windows-x86-64-avx2.exe"
 )
@@ -28,7 +30,7 @@ ENGINE_COMMAND = [
     "--local-files-only",
     "--use-uci-history",
     "--elo",
-    "1500",
+    str(MAIA_ELO),
 ]
 
 MODEL_CACHE_COMMAND = [
@@ -42,9 +44,12 @@ MODEL_CACHE_COMMAND = [
 
 def ensure_model_cached() -> None:
     MAIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    if any(MAIA_CACHE_DIR.rglob(f"{MODEL_NAME}.pt")):
+    if MODEL_SPEC.checkpoint_filename and any(
+        MAIA_CACHE_DIR.rglob(MODEL_SPEC.checkpoint_filename)
+    ):
         return
     subprocess.run(MODEL_CACHE_COMMAND, check=True)
+
 
 PIECES = [
     (chess.QUEEN, "queen", 9),
@@ -77,18 +82,16 @@ class ChessApi:
         if move not in self.board.legal_moves:
             raise ValueError("Illegal move")
 
-        sounds = [self._push(move)]
-        if not self._game_over():
-            try:
-                reply = self._engine.play(self.board, chess.engine.Limit(nodes=1)).move
-                if reply is None or reply not in self.board.legal_moves:
-                    raise RuntimeError("Maia returned no legal move")
-                sounds.append(self._push(reply))
-            except Exception:
-                self.board.pop()
-                raise
+        return self._state(self._push(move))
 
-        return self._state(sounds)
+    def reply(self) -> dict:
+        if self.board.turn != chess.BLACK or self._game_over():
+            raise ValueError("Maia has no move to play")
+
+        move = self._engine.play(self.board, chess.engine.Limit(nodes=1)).move
+        if move is None or move not in self.board.legal_moves:
+            raise RuntimeError("Maia returned no legal move")
+        return self._state(self._push(move))
 
     def action(self, name: str) -> dict:
         if name == "takeback":
@@ -131,14 +134,19 @@ class ChessApi:
             or self.board.is_game_over(claim_draw=False)
         )
 
-    def _push(self, move: chess.Move) -> str:
+    @staticmethod
+    def _move_sounds(board: chess.Board, captured: bool) -> list[str]:
+        sounds = ["capture" if captured else "move"]
+        if board.is_checkmate():
+            sounds.append("checkmate")
+        elif board.is_check():
+            sounds.append("check")
+        return sounds
+
+    def _push(self, move: chess.Move) -> list[str]:
         captured = self.board.is_capture(move)
         self.board.push(move)
-        if self.board.is_checkmate():
-            return "checkmate"
-        if self.board.is_check():
-            return "check"
-        return "capture" if captured else "move"
+        return self._move_sounds(self.board, captured)
 
     @staticmethod
     def _material(board: chess.Board) -> dict:
@@ -168,7 +176,9 @@ class ChessApi:
         if outcome is None:
             if self.board.is_check():
                 return None, "Check", None
-            status = "Your turn" if self.board.turn == chess.WHITE else "Maia is thinking..."
+            status = (
+                "Your turn" if self.board.turn == chess.WHITE else "Maia is thinking..."
+            )
             return None, status, None
 
         if outcome.termination == chess.Termination.CHECKMATE:
@@ -189,7 +199,7 @@ class ChessApi:
         game.headers.update(
             Event="Maia Local Chess",
             White="You",
-            Black="Maia 1500",
+            Black=f"{MODEL_SPEC.display_name} {MAIA_ELO}",
             Result=result or "*",
         )
         return str(game)
@@ -208,7 +218,7 @@ class ChessApi:
                 "lastMove": None,
                 "check": False,
                 "material": self._material(replay),
-                "sound": None,
+                "moveSounds": [],
             }
         ]
 
@@ -217,15 +227,6 @@ class ChessApi:
             captured = replay.is_capture(move)
             uci = move.uci()
             replay.push(move)
-            sound = (
-                "checkmate"
-                if replay.is_checkmate()
-                else "check"
-                if replay.is_check()
-                else "capture"
-                if captured
-                else "move"
-            )
             history.append(
                 {
                     "fen": replay.board_fen(),
@@ -233,7 +234,7 @@ class ChessApi:
                     "lastMove": [uci[:2], uci[2:4]],
                     "check": replay.is_check(),
                     "material": self._material(replay),
-                    "sound": sound,
+                    "moveSounds": self._move_sounds(replay, captured),
                 }
             )
 
@@ -251,12 +252,14 @@ class ChessApi:
 
         last_move = self.board.peek().uci() if self.board.move_stack else None
         return {
+            "modelName": MODEL_SPEC.display_name,
+            "modelElo": MAIA_ELO,
             "fen": self.board.board_fen(),
             "turn": "white" if self.board.turn == chess.WHITE else "black",
             "lastMove": [last_move[:2], last_move[2:4]] if last_move else None,
             "check": self.board.is_check(),
             "material": self._material(self.board),
-            "sound": history[-1]["sound"],
+            "moveSounds": history[-1]["moveSounds"],
             "gameOver": game_over,
             "result": result,
             "status": status,
@@ -275,7 +278,9 @@ class ChessApi:
 def main() -> None:
     dist = PROJECT_ROOT / "web" / "dist"
     if not (dist / "index.html").exists():
-        raise SystemExit("Frontend not built. Run: cd web && pnpm install && pnpm run build")
+        raise SystemExit(
+            "Frontend not built. Run: cd web && pnpm install && pnpm run build"
+        )
 
     ensure_model_cached()
 
@@ -304,6 +309,10 @@ def main() -> None:
         data = request.get_json(silent=True) or {}
         return game.move(str(data.get("uci", "")))
 
+    @server.post("/api/reply")
+    def reply():
+        return game.reply()
+
     @server.post("/api/action")
     def action():
         data = request.get_json(silent=True) or {}
@@ -328,7 +337,9 @@ def main() -> None:
         variation_moves = data.get("moves", [])
         if not isinstance(variation_moves, list):
             raise ValueError("Invalid variation path")
-        return pgn_analysis.analyse_position(ply, [str(move) for move in variation_moves])
+        return pgn_analysis.analyse_position(
+            ply, [str(move) for move in variation_moves]
+        )
 
     @server.post("/api/analysis/move")
     def analysis_move():

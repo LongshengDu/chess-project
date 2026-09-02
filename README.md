@@ -1,7 +1,8 @@
 # Maia Local Web Chess
 
 A small local web chess game with a Lichess-inspired play layout. You play
-White against Maia3-5M at Elo 1500. A small Snabbdom controller and Lichess
+White against the Maia3 model selected by `MODEL_NAME` in `backend/app.py` at
+Elo 1500. A small Snabbdom controller and Lichess
 round-style views render the interface around Chessground, while `python-chess`
 owns the game state, notation, and rules.
 
@@ -22,23 +23,21 @@ The notebook experiments and their supporting files also remain at the root.
 
 ## Install and run
 
-Requirements: Python 3.10+, Git, Node.js 22+, `pnpm`, `uv`, and a web browser. From the
+Requirements: Python 3.10+, Git, Node.js 22+, `uv`, and a web browser. From the
 repository root in PowerShell:
 
 ```powershell
 git submodule update --init --depth 1
 uv sync
-uv run maia3-cache --model maia3-5m --cache-dir .\backend\.cache\maia3
-cd web
-pnpm install
-pnpm run build
-cd ..
+uv run python -c "from backend.app import ensure_model_cached; ensure_model_cached()"
+uv run web/build.py
 uv run python .\backend\app.py
 ```
 
 Open <http://127.0.0.1:5000>. Stop the server with `Ctrl+C`.
 
-`maia3-cache` downloads the 5M checkpoint into the project-local ignored
+The cache command resolves `MODEL_NAME` through Maia3's model registry and
+downloads the selected checkpoint into the project-local ignored
 `backend/.cache/maia3` directory. Server startup checks that cache before
 launching Maia, and the UCI process runs in local-files-only mode so model
 downloads cannot consume its initialization timeout. After the initial setup,
@@ -63,8 +62,10 @@ Maia3 (one persistent process)
 ```
 
 The controller sends a UCI move such as `e2e4` to `POST /api/move`. Python
-validates and pushes it, asks Maia for a `nodes=1` reply, pushes that reply, and
-returns a complete display state. The controller converts the returned
+validates and pushes it, then immediately returns a complete display state and
+the authoritative move sound. The controller renders and plays that sound before
+calling `POST /api/reply`; Python asks Maia for a `nodes=1` move and returns its
+new state and sound separately. The controller converts the returned
 destination object to Chessground's required `Map`; it does not calculate
 moves. Promotion choices are also supplied by Python. Stopping the server runs
 a `finally` block that sends the engine its UCI quit command.
@@ -85,12 +86,13 @@ The controls provide local takeback, draw claim, resign confirmation, and New
 Game. Automatic draws and claimable threefold/fifty-move draws follow
 `python-chess`. Board-menu preferences cover flip, zen, blindfold, coordinates,
 sound, PGN copy, and help. Move, capture, check, and checkmate audio comes from
-the pinned Lichess source in `deps/lichess-lila`.
+the pinned Lichess source in `deps/lichess-lila`. Like Lila's round controller,
+the human and remote move sounds are distinct events rather than a delayed pair.
 
 ## PGN analysis
 
 Choose **Analyse PGN**, paste one game's Portable Game Notation, and select a
-move in the move sheet. The board shows the position before that move. Maia3-5M
+move in the move sheet. The board shows the position before that move. The configured Maia3 model
 returns the exact legal-move policy conditioned on 1500 Elo for both players;
 the panel displays the ten most likely human moves, the imported PGN move when
 it falls outside that top ten, and the probability mass of the remaining legal
@@ -123,8 +125,10 @@ state. The separable behavior and assets are adapted to the local Flask API.
 
 ## Development
 
-Run `pnpm run build` from `web/` after editing the frontend. The generated
-`web/dist/` directory contains no hand-written application logic. Python and uv
+Run `uv run web/build.py` from the repository root after editing the frontend.
+The script uses Node.js 22+ directly and bootstraps the pinned pnpm version when
+`web/node_modules` is missing, so a global pnpm installation is not required.
+The generated `web/dist/` directory contains no hand-written application logic. Python and uv
 configuration remains at the repository root, while all Node, pnpm, Vite, and
 TypeScript configuration lives under `web/`. Dependency sources remain separate
 under `deps/`; update their pinned revisions deliberately and repeat the UI audit

@@ -3,8 +3,8 @@ import type { Api as ChessgroundApi } from '@lichess-org/chessground/api';
 import type { Key, Role } from '@lichess-org/chessground/types';
 
 import captureUrl from '../deps/lichess-lila/public/sound/standard/Capture.mp3?url';
-import checkUrl from '../deps/lichess-lila/public/sound/standard/Check.mp3?url';
-import checkmateUrl from '../deps/lichess-lila/public/sound/standard/Checkmate.mp3?url';
+import checkUrl from '../deps/lichess-lila/public/sound/Silence.mp3?url';
+import checkmateUrl from '../deps/lichess-lila/public/sound/standard/GenericNotify.mp3?url';
 import moveUrl from '../deps/lichess-lila/public/sound/standard/Move.mp3?url';
 import { analysisApi, roundApi } from './api';
 import { AnalysisTree, type AnalysisTreeNode } from './lila/analyse/tree';
@@ -88,6 +88,14 @@ export class LocalRoundController {
     return Boolean(this.busy || this.analysisBusy);
   }
 
+  get modelName(): string {
+    return this.state?.modelName ?? 'Maia3';
+  }
+
+  get modelElo(): number {
+    return this.state?.modelElo ?? 1500;
+  }
+
   get atStart(): boolean {
     return this.analysis ? Boolean(this.analysisTree?.atStart) : this.viewIndex === 0;
   }
@@ -150,7 +158,9 @@ export class LocalRoundController {
 
   async load(): Promise<void> {
     try {
-      this.commit(await roundApi.state());
+      const state = await roundApi.state();
+      this.commit(state);
+      if (!state.gameOver && state.turn === 'black') await this.requestMaiaMove();
     } catch (error) {
       this.fail(error);
     }
@@ -164,7 +174,7 @@ export class LocalRoundController {
     if (this.viewIndex === previous) return;
     this.notice = undefined;
     this.redrawAndSync();
-    if (this.viewIndex > previous) this.playSound(this.position?.sound ?? null);
+    if (this.viewIndex > previous) this.playSounds(this.position?.moveSounds ?? []);
   }
 
   firstPosition = (): void => {
@@ -343,7 +353,7 @@ export class LocalRoundController {
       this.analysisBusy = undefined;
       void this.playAnalysisMove(uci, true);
     }
-    else void this.request('Maia is thinking...', () => roundApi.move(uci), true);
+    else void this.submitMove(uci);
   };
 
   clearShapes(): void {
@@ -413,7 +423,7 @@ export class LocalRoundController {
       this.lock('Choose a piece', true);
       return;
     }
-    await this.request('Maia is thinking...', () => roundApi.move(origin + destination), true);
+    await this.submitMove(origin + destination);
   }
 
   selectAnalysisMove = (uci: string): void => {
@@ -425,7 +435,7 @@ export class LocalRoundController {
     if (!tree || this.analysisBusy || !tree.select(node)) return;
     this.analysisError = undefined;
     this.redrawAndSync();
-    this.playSound(node.position.sound);
+    this.playSounds(node.position.moveSounds);
     void this.refreshAnalysis();
   }
 
@@ -455,7 +465,7 @@ export class LocalRoundController {
       this.analysisBusy = undefined;
       document.body.classList.remove('thinking');
       this.redrawAndSync();
-      this.playSound(node.position.sound);
+      this.playSounds(node.position.moveSounds);
       await this.refreshAnalysis();
     } catch (error) {
       this.analysisBusy = undefined;
@@ -470,7 +480,7 @@ export class LocalRoundController {
     if (!this.analysis || !tree) return;
     const request = ++this.analysisRequest;
     const path = tree.requestPath;
-    this.analysisBusy = 'Maia 1500 + Stockfish are analysing...';
+    this.analysisBusy = `${this.modelName} ${this.modelElo} + Stockfish are analysing...`;
     this.analysisError = undefined;
     document.body.classList.add('thinking');
     this.redraw();
@@ -503,6 +513,28 @@ export class LocalRoundController {
     }
   }
 
+  // Lila plays the local move and the later server move as separate sound events.
+  // These two local API phases preserve that timing without moving chess rules into TypeScript.
+  private async submitMove(uci: string): Promise<void> {
+    this.lock('Maia is thinking...', true);
+    try {
+      const state = await roundApi.move(uci);
+      this.commit(state);
+      if (!state.gameOver && state.turn === 'black') await this.requestMaiaMove();
+    } catch (error) {
+      await this.restore(error);
+    }
+  }
+
+  private async requestMaiaMove(): Promise<void> {
+    this.lock('Maia is thinking...');
+    try {
+      this.commit(await roundApi.reply());
+    } catch (error) {
+      await this.restore(error);
+    }
+  }
+
   private lock(message: string, preserveBoard = false): void {
     this.busy = message;
     this.notice = undefined;
@@ -523,7 +555,7 @@ export class LocalRoundController {
     this.confirmingResign = false;
     document.body.classList.remove('thinking');
     this.redrawAndSync();
-    state.sounds.forEach((sound, index) => window.setTimeout(() => this.playSound(sound), index * 100));
+    this.playSounds(state.sounds);
   }
 
   private async restore(error: unknown): Promise<void> {
@@ -592,5 +624,11 @@ export class LocalRoundController {
     const sound = this.sounds[name];
     sound.currentTime = 0;
     void sound.play().catch(() => undefined);
+  }
+
+  private playSounds(names: MoveSound[]): void {
+    names.forEach((name, index) =>
+      window.setTimeout(() => this.playSound(name), index * 100),
+    );
   }
 }

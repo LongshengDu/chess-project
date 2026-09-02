@@ -19,6 +19,7 @@ async function requestJson<T extends object>(path: string, body?: object): Promi
 export const roundApi = {
   state: () => requestJson<RoundState>('/api/state'),
   move: (uci: string) => requestJson<RoundState>('/api/move', { uci }),
+  reply: () => requestJson<RoundState>('/api/reply', {}),
   action: (name: string) => requestJson<RoundState>('/api/action', { name }),
   newGame: () => requestJson<RoundState>('/api/new-game', {}),
 };

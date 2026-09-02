@@ -2,6 +2,7 @@
   "name": "maia-local-web-chess",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.15.0",
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "dev": "vite",

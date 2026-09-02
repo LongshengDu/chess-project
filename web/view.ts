@@ -64,9 +64,9 @@ function player(color: Color, ctrl: LocalRoundController): VNode {
       h('div', [
         h(`i${!ctrl.analysis && !human ? '.online' : ''}`),
         h('strong', name),
-        !ctrl.analysis && !human && h('small', '1500'),
+        !ctrl.analysis && !human && h('small', String(ctrl.modelElo)),
       ]),
-      h('span', ctrl.analysis ? color[0].toUpperCase() + color.slice(1) : human ? 'White' : 'Maia3-5M'),
+      h('span', ctrl.analysis ? color[0].toUpperCase() + color.slice(1) : human ? 'White' : ctrl.modelName),
     ]),
     h(
       `div.clock.rclock.rclock-${human ? 'bottom' : 'top'}`,
@@ -271,6 +271,8 @@ function analysisTools(ctrl: LocalRoundController): VNode | false {
   const tree = ctrl.analysisTree;
   if (!ctrl.analysis || !tree) return false;
   return renderAnalysisTools({
+    modelName: ctrl.modelName,
+    modelElo: ctrl.modelElo,
     result: ctrl.analysisResult,
     moves: renderAnalysisTree(tree, ctrl.jumpToAnalysisNode, ctrl.analysis.result),
     loading: Boolean(ctrl.analysisBusy),
@@ -309,7 +311,7 @@ function pgnDialog(ctrl: LocalRoundController): VNode | false {
         }),
         ctrl.analysisError && h('p.pgn-error', ctrl.analysisError),
         h('footer', [
-          h('small', 'Maia probabilities use 1500/1500 Elo. Click a candidate or play on the board to add a variation.'),
+          h('small', `${ctrl.modelName} probabilities use ${ctrl.modelElo}/${ctrl.modelElo} Elo. Click a candidate or play on the board to add a variation.`),
           button('#import-pgn', ctrl.analysisBusy ? 'ANALYSING…' : 'ANALYSE', 'Analyse pasted PGN', Boolean(ctrl.analysisBusy || !ctrl.analysisInput.trim()), () => void ctrl.importPgn()),
         ]),
       ],
