@@ -21,14 +21,18 @@ class ChessApi:
         self._engine = engine
         self._model_name = model_name
         self._model_elo = model_elo
+        self._human_color = chess.WHITE
         self._resigned = False
         self._claimed_draw: str | None = None
 
     def state(self) -> dict:
         return self._state()
 
+    def _human_to_move(self) -> bool:
+        return self.board.turn == self._human_color
+
     def move(self, uci: str) -> dict:
-        if self.board.turn != chess.WHITE or self._game_over():
+        if not self._human_to_move() or self._game_over():
             raise ValueError("It is not your turn")
 
         try:
@@ -41,7 +45,7 @@ class ChessApi:
         return self._state(self._push(move))
 
     def reply(self) -> dict:
-        if self.board.turn != chess.BLACK or self._game_over():
+        if self._human_to_move() or self._game_over():
             raise ValueError("Maia has no move to play")
 
         move = self._engine.play(self.board, chess.engine.Limit(nodes=1)).move
@@ -71,8 +75,20 @@ class ChessApi:
             raise ValueError("Unknown action")
         return self._state()
 
-    def new_game(self) -> dict:
-        self.board.reset()
+    def new_game(self, color: str = "white", fen: str | None = None) -> dict:
+        if color not in {"white", "black"}:
+            raise ValueError("Color must be white or black")
+
+        fen = (fen or "").replace("_", " ").strip()
+        try:
+            board = chess.Board(fen) if fen else chess.Board()
+        except ValueError as error:
+            raise ValueError(f"Invalid FEN: {error}") from error
+        if not board.is_valid():
+            raise ValueError("Invalid FEN position")
+
+        self.board = board
+        self._human_color = chess.WHITE if color == "white" else chess.BLACK
         self._resigned = False
         self._claimed_draw = None
         return self._state()
@@ -97,7 +113,9 @@ class ChessApi:
 
     def _result_status(self) -> tuple[str | None, str, chess.Outcome | None]:
         if self._resigned:
-            return "0-1", "You resigned — Black wins", None
+            winner = "Black" if self._human_color == chess.WHITE else "White"
+            result = "0-1" if self._human_color == chess.WHITE else "1-0"
+            return result, f"You resigned — {winner} wins", None
         if self._claimed_draw:
             return "1/2-1/2", f"Draw — {self._claimed_draw}", None
 
@@ -106,7 +124,9 @@ class ChessApi:
             if self.board.is_check():
                 return None, "Check", None
             status = (
-                "Your turn" if self.board.turn == chess.WHITE else "Maia is thinking..."
+                "Your turn"
+                if self._human_to_move()
+                else "Maia is thinking..."
             )
             return None, status, None
 
@@ -125,10 +145,11 @@ class ChessApi:
 
     def _pgn(self, result: str | None) -> str:
         game = chess.pgn.Game.from_board(self.board)
+        maia = f"{self._model_name} {self._model_elo}"
         game.headers.update(
             Event="Maia Local Chess",
-            White="You",
-            Black=f"{self._model_name} {self._model_elo}",
+            White="You" if self._human_color == chess.WHITE else maia,
+            Black="You" if self._human_color == chess.BLACK else maia,
             Result=result or "*",
         )
         return str(game)
@@ -143,9 +164,9 @@ class ChessApi:
         history = [
             {
                 "fen": replay.board_fen(),
-                "turn": "white",
+                "turn": "white" if replay.turn == chess.WHITE else "black",
                 "lastMove": None,
-                "check": False,
+                "check": replay.is_check(),
                 "material": material(replay),
                 "moveSounds": [],
             }
@@ -183,6 +204,7 @@ class ChessApi:
         return {
             "modelName": self._model_name,
             "modelElo": self._model_elo,
+            "humanColor": "white" if self._human_color == chess.WHITE else "black",
             "fen": self.board.board_fen(),
             "turn": "white" if self.board.turn == chess.WHITE else "black",
             "lastMove": [last_move[:2], last_move[2:4]] if last_move else None,

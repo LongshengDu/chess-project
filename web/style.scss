@@ -39,16 +39,6 @@ body {
   flex-direction: column;
 }
 
-.player.opponent { order: 0; }
-#black-material { order: 1; }
-.board-frame { order: 2; }
-#white-material { order: 3; }
-.player.human { order: 4; }
-.board-side.flipped .player.human { order: 0; }
-.board-side.flipped #white-material { order: 1; }
-.board-side.flipped #black-material { order: 3; }
-.board-side.flipped .player.opponent { order: 4; }
-
 .player {
   height: 42px;
   display: flex;
@@ -1119,7 +1109,8 @@ button:disabled {
   background: #0008;
 }
 
-.pgn-dialog {
+.pgn-dialog,
+.game-setup-dialog {
   width: min(92vw, 680px);
   max-height: 92vh;
   overflow: hidden;
@@ -1129,7 +1120,12 @@ button:disabled {
   box-shadow: 0 8px 32px #0006;
 }
 
-.pgn-dialog > header {
+.game-setup-dialog {
+  width: min(92vw, 520px);
+}
+
+.pgn-dialog > header,
+.game-setup-dialog > header {
   display: flex;
   align-items: center;
   padding: 15px 17px;
@@ -1137,21 +1133,26 @@ button:disabled {
 }
 
 .pgn-dialog h2,
-.pgn-dialog p {
+.pgn-dialog p,
+.game-setup-dialog h2,
+.game-setup-dialog p {
   margin: 0;
 }
 
-.pgn-dialog h2 {
+.pgn-dialog h2,
+.game-setup-dialog h2 {
   font-size: 19px;
 }
 
-.pgn-dialog header p {
+.pgn-dialog header p,
+.game-setup-dialog header p {
   margin-top: 4px;
   color: #999;
   font-size: 12px;
 }
 
-.pgn-dialog header button {
+.pgn-dialog header button,
+.game-setup-dialog header button {
   width: 34px;
   height: 34px;
   margin-left: auto;
@@ -1159,6 +1160,141 @@ button:disabled {
   background: transparent;
   box-shadow: none;
   font-size: 24px;
+}
+
+.game-setup-dialog .setup-content {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+}
+
+.game-setup-dialog .config-group {
+  display: grid;
+  gap: 7px;
+}
+
+.game-setup-dialog .config-group > .label {
+  color: #555;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.game-setup-dialog #fen-input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  color: #333;
+  background: #fbfbfb;
+  font: 12px/1.4 Consolas, "Courier New", monospace;
+}
+
+.game-setup-dialog #fen-input:focus {
+  border-color: $c-primary;
+  outline: 2px solid #75990033;
+}
+
+.game-setup-dialog #fen-input[aria-invalid='true'] {
+  border-color: #c33;
+}
+
+.game-setup-dialog .config-group small {
+  color: #888;
+  font-size: 11px;
+}
+
+.game-setup-dialog .color-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.game-setup-dialog .color-cards > div {
+  position: relative;
+}
+
+.game-setup-dialog .color-cards input {
+  position: absolute;
+  opacity: 0;
+}
+
+.game-setup-dialog .card-radio {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 5px;
+  background: #f7f7f7;
+  cursor: pointer;
+}
+
+.game-setup-dialog .color-cards input:checked + .card-radio {
+  border-color: $c-primary;
+  background: #edf4e2;
+  box-shadow: 0 1px 4px #0002;
+}
+
+.game-setup-dialog .color-cards input:focus-visible + .card-radio {
+  outline: 2px solid #75990066;
+  outline-offset: 2px;
+}
+
+.game-setup-dialog .color-cards input:disabled + .card-radio {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.game-setup-dialog .color-picker__button icon {
+  width: 38px;
+  height: 38px;
+  display: block;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 38px 38px;
+}
+
+.game-setup-dialog .color-picker__button.white icon {
+  background-image: url('../deps/lichess-lila/public/piece/cburnett/wK.svg');
+}
+
+.game-setup-dialog .color-picker__button.black icon {
+  background-image: url('../deps/lichess-lila/public/piece/cburnett/bK.svg');
+}
+
+.game-setup-dialog .card-radio .text {
+  color: #555;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.game-setup-dialog .setup-error {
+  padding: 9px 10px;
+  border-radius: 3px;
+  color: #a33;
+  background: #fee;
+  white-space: normal;
+}
+
+.game-setup-dialog form > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 12px 20px;
+  border-top: 1px solid #ddd;
+  background: #f5f5f5;
+}
+
+.game-setup-dialog form > footer button {
+  min-width: 110px;
+  padding: 10px 14px;
+}
+
+.game-setup-dialog form > footer .cancel {
+  color: #666;
+  background: linear-gradient(#fff, #e5e5e5);
 }
 
 .pgn-dialog textarea {

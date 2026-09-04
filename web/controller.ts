@@ -1,6 +1,7 @@
 import { Chessground } from '@lichess-org/chessground';
 import type { Api as ChessgroundApi } from '@lichess-org/chessground/api';
 import type { Key, Role } from '@lichess-org/chessground/types';
+import { opposite } from '@lichess-org/chessground/util';
 
 import captureUrl from '../deps/lichess-lila/public/sound/standard/Capture.mp3?url';
 import checkUrl from '../deps/lichess-lila/public/sound/Silence.mp3?url';
@@ -32,11 +33,14 @@ const promotionRoles: Record<PromotionRole, Role> = {
 export class LocalRoundController {
   state?: RoundState;
   viewIndex = 0;
-  orientation: Color = 'white';
   promotion?: PromotionChoice;
   menuOpen = false;
   helpOpen = false;
   confirmingResign = false;
+  gameSetupOpen = false;
+  gameSetupColor: Color = 'white';
+  gameSetupFen = '';
+  gameSetupError?: string;
   busy?: string;
   notice?: string;
   analysis?: AnalysisGame;
@@ -54,6 +58,7 @@ export class LocalRoundController {
   };
 
   private ground?: ChessgroundApi;
+  private boardFlipped = false;
   private analysisRequest = 0;
   private readonly sounds: Record<MoveSound, HTMLAudioElement> = {
     move: new Audio(moveUrl),
@@ -96,6 +101,15 @@ export class LocalRoundController {
     return this.state?.modelElo ?? 1500;
   }
 
+  get humanColor(): Color {
+    return this.state?.humanColor ?? 'white';
+  }
+
+  // Adapted from Lila round/ground.ts: orient to the player unless flipped.
+  get orientation(): Color {
+    return this.boardFlipped ? opposite(this.humanColor) : this.humanColor;
+  }
+
   get atStart(): boolean {
     return this.analysis ? Boolean(this.analysisTree?.atStart) : this.viewIndex === 0;
   }
@@ -127,7 +141,9 @@ export class LocalRoundController {
   }
 
   mountGround = (element: HTMLElement): void => {
-    if (this.ground) return;
+    if (this.ground?.state.dom.elements.wrap === element) return;
+    // A replaced Snabbdom host must never retain a controller for detached DOM.
+    this.ground?.destroy();
     this.ground = Chessground(element, {
       orientation: this.orientation,
       coordinates: this.prefs.coordinates,
@@ -158,9 +174,7 @@ export class LocalRoundController {
 
   async load(): Promise<void> {
     try {
-      const state = await roundApi.state();
-      this.commit(state);
-      if (!state.gameOver && state.turn === 'black') await this.requestMaiaMove();
+      await this.commitAndRequestMaia(await roundApi.state());
     } catch (error) {
       this.fail(error);
     }
@@ -208,7 +222,7 @@ export class LocalRoundController {
 
   flip = (): void => {
     this.promotion = undefined;
-    this.orientation = this.orientation === 'white' ? 'black' : 'white';
+    this.boardFlipped = !this.boardFlipped;
     this.menuOpen = false;
     this.redrawAndSync();
   };
@@ -328,10 +342,55 @@ export class LocalRoundController {
     void this.request(message, () => roundApi.action(name));
   }
 
-  newGame = (): void => {
+  openGameSetup = (): void => {
+    if (this.busy) return;
     this.menuOpen = false;
-    void this.request('Starting new game...', roundApi.newGame);
+    this.gameSetupColor = this.humanColor;
+    this.gameSetupFen = '';
+    this.gameSetupError = undefined;
+    this.gameSetupOpen = true;
+    this.redraw();
   };
+
+  closeGameSetup = (): void => {
+    if (this.busy) return;
+    this.gameSetupOpen = false;
+    this.gameSetupError = undefined;
+    this.redraw();
+  };
+
+  setGameSetupColor = (color: Color): void => {
+    this.gameSetupColor = color;
+    this.gameSetupError = undefined;
+    this.redraw();
+  };
+
+  setGameSetupFen = (fen: string): void => {
+    this.gameSetupFen = fen.replace(/_/g, ' ');
+    this.gameSetupError = undefined;
+    this.redraw();
+  };
+
+  startGame = (): void => {
+    if (this.busy) return;
+    this.boardFlipped = false;
+    void this.startNewGame(this.gameSetupColor, this.gameSetupFen.trim());
+  };
+
+  private async startNewGame(color: Color, fen: string): Promise<void> {
+    this.gameSetupError = undefined;
+    this.lock(`Starting a new game as ${color}...`);
+    try {
+      const state = await roundApi.newGame(color, fen || undefined);
+      this.gameSetupOpen = false;
+      await this.commitAndRequestMaia(state);
+    } catch (error) {
+      this.busy = undefined;
+      this.gameSetupError = error instanceof Error ? error.message : String(error);
+      document.body.classList.remove('thinking');
+      this.redrawAndSync();
+    }
+  }
 
   finishPromotion = (role?: PromotionRole): void => {
     const choice = this.promotion;
@@ -345,7 +404,14 @@ export class LocalRoundController {
 
     this.ground?.setPieces(
       new Map([
-        [choice.destination, { color: 'white', role: promotionRoles[role], promoted: true }],
+        [
+          choice.destination,
+          {
+            color: this.analysis ? this.position?.turn ?? 'white' : this.humanColor,
+            role: promotionRoles[role],
+            promoted: true,
+          },
+        ],
       ]),
     );
     const uci = choice.origin + choice.destination + role;
@@ -377,6 +443,10 @@ export class LocalRoundController {
   handleKey(event: KeyboardEvent): boolean {
     if (event.key === 'Escape' && this.analysisDialogOpen) {
       this.closeAnalysisDialog();
+      return true;
+    }
+    if (event.key === 'Escape' && this.gameSetupOpen) {
+      this.closeGameSetup();
       return true;
     }
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
@@ -539,9 +609,7 @@ export class LocalRoundController {
   private async submitMove(uci: string): Promise<void> {
     this.lock('Maia is thinking...', true);
     try {
-      const state = await roundApi.move(uci);
-      this.commit(state);
-      if (!state.gameOver && state.turn === 'black') await this.requestMaiaMove();
+      await this.commitAndRequestMaia(await roundApi.move(uci));
     } catch (error) {
       await this.restore(error);
     }
@@ -554,6 +622,12 @@ export class LocalRoundController {
     } catch (error) {
       await this.restore(error);
     }
+  }
+
+  private async commitAndRequestMaia(state: RoundState): Promise<void> {
+    this.commit(state);
+    if (!state.gameOver && state.turn !== state.humanColor)
+      await this.requestMaiaMove();
   }
 
   private lock(message: string, preserveBoard = false): void {
@@ -619,7 +693,12 @@ export class LocalRoundController {
       analysisPosition && !analysisPosition.gameOver && !this.analysisBusy,
     );
     const canPlayMove = Boolean(
-      !this.analysis && state && this.live && !state.gameOver && !this.busy && state.turn === 'white',
+      !this.analysis &&
+      state &&
+      this.live &&
+      !state.gameOver &&
+      !this.busy &&
+      state.turn === state.humanColor,
     );
     const canMove = canAnalyseMove || canPlayMove;
     const destinations = analysisPosition?.dests ?? state?.dests ?? {};
@@ -631,7 +710,7 @@ export class LocalRoundController {
       lastMove: position.lastMove ?? undefined,
       coordinates: this.prefs.coordinates,
       movable: {
-        color: canAnalyseMove ? position.turn : canPlayMove ? 'white' : undefined,
+        color: canAnalyseMove ? position.turn : canPlayMove ? state?.humanColor : undefined,
         dests: canMove
           ? new Map(Object.entries(destinations) as [Key, Key[]][])
           : new Map<Key, Key[]>(),

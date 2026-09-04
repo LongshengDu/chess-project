@@ -1,7 +1,9 @@
 import type { Role } from '@lichess-org/chessground/types';
+import { opposite } from '@lichess-org/chessground/util';
 import type { VNode } from 'snabbdom';
 
 import type { LocalRoundController } from './controller';
+import { gameSetup } from './lila/gameSetup';
 import { renderAnalysisTools } from './lila/analyse/moveTable';
 import { renderAnalysisTree } from './lila/analyse/treeView';
 import { promotionView } from './lila/promotion';
@@ -50,33 +52,46 @@ function repeatButton(
 }
 
 function player(color: Color, ctrl: LocalRoundController): VNode {
-  const human = color === 'white';
+  const human = !ctrl.analysis && color === ctrl.humanColor;
+  const bottom = color === ctrl.orientation;
   const analysisName = color === 'white' ? ctrl.analysis?.white : ctrl.analysis?.black;
   const name = analysisName ?? (human ? 'You' : 'Maia');
   const active = ctrl.analysis
     ? ctrl.position?.turn === color
     : ctrl.live &&
       !ctrl.state?.gameOver &&
-      (ctrl.busy ? color === 'black' : ctrl.state?.turn === color);
-  return h(`div.player.ruser.ruser-${human ? 'bottom' : 'top'}.${human ? 'human' : 'opponent'}`, [
-    h(`span.avatar${human ? '' : '.black'}`, { attrs: { 'aria-hidden': 'true' } }, human ? '♙' : '♟'),
-    h('div.player-info', [
-      h('div', [
-        h(`i${!ctrl.analysis && !human ? '.online' : ''}`),
-        h('strong', name),
-        !ctrl.analysis && !human && h('small', String(ctrl.modelElo)),
-      ]),
-      h('span', ctrl.analysis ? color[0].toUpperCase() + color.slice(1) : human ? 'White' : ctrl.modelName),
-    ]),
-    h(
-      `div.clock.rclock.rclock-${human ? 'bottom' : 'top'}`,
-      {
-        class: { active },
-        attrs: { 'aria-label': `${name}, ${ctrl.analysis ? 'side to move indicator' : 'untimed game'}` },
+      (ctrl.busy ? color !== ctrl.humanColor : ctrl.state?.turn === color);
+  return h(
+    `div.player.ruser.${color}`,
+    {
+      key: `player-${color}`,
+      class: {
+        human,
+        opponent: !human,
+        'ruser-bottom': bottom,
+        'ruser-top': !bottom,
       },
-      '∞',
-    ),
-  ]);
+    },
+    [
+      h(`span.avatar.${color}`, { attrs: { 'aria-hidden': 'true' } }, color === 'white' ? '♙' : '♟'),
+      h('div.player-info', [
+        h('div', [
+          h(`i${!ctrl.analysis && !human ? '.online' : ''}`),
+          h('strong', name),
+          !ctrl.analysis && !human && h('small', String(ctrl.modelElo)),
+        ]),
+        h('span', ctrl.analysis || human ? color[0].toUpperCase() + color.slice(1) : ctrl.modelName),
+      ]),
+      h(
+        `div.clock.rclock.rclock-${bottom ? 'bottom' : 'top'}`,
+        {
+          class: { active },
+          attrs: { 'aria-label': `${name}, ${ctrl.analysis ? 'side to move indicator' : 'untimed game'}` },
+        },
+        '∞',
+      ),
+    ],
+  );
 }
 
 function groupMaterial(side: MaterialSide, color: Color): VNode[] {
@@ -107,8 +122,12 @@ function material(color: Color, data: Material, position: 'top' | 'bottom'): VNo
     ? `${color} material advantage: ${side.pieces.join(', ')}${side.score ? `, plus ${side.score}` : ''}`
     : `${color} has no material advantage`;
   return h(
-    `div#${color}-material.material.material-${position}.cg-wrap`,
-    { attrs: { 'aria-label': description } },
+    `div#${color}-material.material.cg-wrap`,
+    {
+      key: `material-${color}`,
+      class: { [`material-${position}`]: true },
+      attrs: { 'aria-label': description },
+    },
     groupMaterial(side, color),
   );
 }
@@ -121,7 +140,11 @@ function moveList(ctrl: LocalRoundController): VNode {
     children.push(
       h('div.start-message', [
         h('span', { attrs: { 'aria-hidden': 'true' } }, 'ⓘ'),
-        h('p', ctrl.analysis ? 'This PGN has no main-line moves.' : ['You play the white pieces.', h('br'), h('strong', 'It is your turn.')]),
+        h('p', ctrl.analysis ? 'This PGN has no main-line moves.' : [
+          `You play the ${state?.humanColor ?? 'white'} pieces.`,
+          h('br'),
+          h('strong', state?.turn === state?.humanColor ? 'It is your turn.' : 'Maia is thinking...'),
+        ]),
       ]),
     );
   } else {
@@ -319,6 +342,20 @@ function pgnDialog(ctrl: LocalRoundController): VNode | false {
   ]);
 }
 
+function gameSetupDialog(ctrl: LocalRoundController): VNode | false {
+  if (!ctrl.gameSetupOpen) return false;
+  return gameSetup({
+    color: ctrl.gameSetupColor,
+    fen: ctrl.gameSetupFen,
+    busy: Boolean(ctrl.busy),
+    error: ctrl.gameSetupError,
+    onColor: ctrl.setGameSetupColor,
+    onFen: ctrl.setGameSetupFen,
+    onCancel: ctrl.closeGameSetup,
+    onSubmit: ctrl.startGame,
+  });
+}
+
 function help(ctrl: LocalRoundController): VNode | false {
   const rows = [
     ['Left / K', 'Previous move'],
@@ -359,6 +396,10 @@ function help(ctrl: LocalRoundController): VNode | false {
 
 export function roundView(ctrl: LocalRoundController): VNode {
   const position = ctrl.position;
+  // Matches Lila round/view/main.ts: player color is the default bottom color,
+  // and flipping swaps the top and bottom colors as one unit.
+  const bottomColor = ctrl.orientation;
+  const topColor = opposite(bottomColor);
   const materialData = position?.material ?? {
     white: { pieces: [], score: 0 },
     black: { pieces: [], score: 0 },
@@ -368,21 +409,27 @@ export function roundView(ctrl: LocalRoundController): VNode {
   const subtitle = ctrl.analysis?.subtitle ?? 'Standard • Casual • Untimed';
   return h('main.game-shell.round', { class: { analysis: ctrl.analysisMode } }, [
     h('section.board-side.round__app', {
-      class: { flipped: ctrl.orientation === 'black' },
       attrs: { 'aria-label': 'Maia game' },
     }, [
-      player('black', ctrl),
-      material('black', materialData, 'top'),
+      player(topColor, ctrl),
+      material(topColor, materialData, 'top'),
       h(
         'div.board-frame.round__app__board.main-board',
-        { hook: onInsert(element => element.addEventListener('wheel', ctrl.onWheel, { passive: false })) },
+        {
+          key: 'board-frame',
+          hook: onInsert(element => element.addEventListener('wheel', ctrl.onWheel, { passive: false })),
+        },
         [
-          h('div#board.cg-wrap', { attrs: { 'aria-label': 'Chess board' }, hook: onInsert(ctrl.mountGround) }),
+          h('div#board.cg-wrap', {
+            key: 'chessground',
+            attrs: { 'aria-label': 'Chess board' },
+            hook: onInsert(ctrl.mountGround),
+          }),
           ctrl.promotion && promotionView(ctrl.promotion, ctrl.orientation, ctrl.finishPromotion),
         ],
       ),
-      material('white', materialData, 'bottom'),
-      player('white', ctrl),
+      material(bottomColor, materialData, 'bottom'),
+      player(bottomColor, ctrl),
     ]),
     h('aside.game-panel.round__app__table', { attrs: { 'aria-label': 'Game notation and controls' } }, [
       h('header', [
@@ -400,11 +447,12 @@ export function roundView(ctrl: LocalRoundController): VNode {
           button('#exit-analysis', 'BACK TO GAME', 'Exit PGN analysis', Boolean(ctrl.analysisBusy), ctrl.exitAnalysis),
         ] : [
           button('#analyse-pgn', 'ANALYSE PGN', 'Paste a PGN for analysis', Boolean(ctrl.busy), ctrl.openAnalysisDialog),
-          button('#new-game', 'NEW GAME', 'New game', Boolean(ctrl.busy), ctrl.newGame),
+          button('#new-game', 'NEW GAME', 'Set up a new game', Boolean(ctrl.busy), ctrl.openGameSetup),
         ]),
       ]),
     ]),
     help(ctrl),
     pgnDialog(ctrl),
+    gameSetupDialog(ctrl),
   ]);
 }

@@ -1,4 +1,4 @@
-import type { AnalysisGame, AnalysisVariationStep, PositionAnalysis, RoundState } from './types';
+import type { AnalysisGame, AnalysisVariationStep, Color, PositionAnalysis, RoundState } from './types';
 
 async function requestJson<T extends object>(path: string, body?: object): Promise<T> {
   const response = await fetch(
@@ -21,7 +21,8 @@ export const roundApi = {
   move: (uci: string) => requestJson<RoundState>('/api/move', { uci }),
   reply: () => requestJson<RoundState>('/api/reply', {}),
   action: (name: string) => requestJson<RoundState>('/api/action', { name }),
-  newGame: () => requestJson<RoundState>('/api/new-game', {}),
+  newGame: (color: Color, fen?: string) =>
+    requestJson<RoundState>('/api/new-game', { color, fen }),
 };
 
 export const analysisApi = {

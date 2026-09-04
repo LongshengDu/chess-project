@@ -76,7 +76,12 @@ def create_app(
 
     @server.post("/api/new-game")
     def new_game():
-        return game.new_game()
+        data = _request_data()
+        fen = data.get("fen")
+        return game.new_game(
+            str(data.get("color", "white")),
+            None if fen is None else str(fen),
+        )
 
     @server.post("/api/analysis/pgn")
     def import_pgn():

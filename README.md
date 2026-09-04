@@ -1,7 +1,7 @@
 # Maia Local Web Chess
 
 A small local web chess game with a Lichess-inspired play layout. You play
-White against the Maia3 model selected by `MAIA_MODEL_NAME` in
+White or Black against the Maia3 model selected by `MAIA_MODEL_NAME` in
 `backend/settings.py` at Elo 1500. A small Snabbdom controller and Lichess
 round-style views render the interface around Chessground, while `python-chess`
 owns the game state, notation, and rules.
@@ -34,8 +34,8 @@ and a web browser. From the repository root in PowerShell:
 git submodule update --init --depth 1
 uv sync
 uv run python -m backend.assets
-uv run web/build.py
-uv run python .\backend\app.py
+uv run python ./web/build.py
+uv run python ./backend/app.py
 ```
 
 Open <http://127.0.0.1:5000>. Stop the server with `Ctrl+C`.
@@ -89,8 +89,12 @@ and Lichess keyboard shortcuts use those snapshots to replay the game without
 implementing chess rules in TypeScript. Chessground provides right-drag arrows
 and circles, and promotion uses an in-board queen/knight/rook/bishop chooser.
 
-The controls provide local takeback, draw claim, resign confirmation, and New
-Game. Automatic draws and claimable threefold/fifty-move draws follow
+The controls provide local takeback, draw claim, resign confirmation, and a
+Lila-style New Game setup dialog. New games can use the standard initial board
+or a valid FEN position, with the human playing either White or Black. Maia
+moves automatically whenever the selected position has Maia to move, and the
+board defaults to the human's orientation. Automatic draws and claimable
+threefold/fifty-move draws follow
 `python-chess`. Board-menu preferences cover flip, zen, blindfold, coordinates,
 sound, PGN copy, and help. Move, capture, check, and checkmate audio comes from
 the pinned Lichess source in `deps/lichess-lila`. Like Lila's round controller,

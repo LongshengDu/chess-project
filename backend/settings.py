@@ -16,6 +16,8 @@ MAIA_ENGINE_COMMAND = [
     "--use-uci-history",
     "--elo",
     str(MAIA_ELO),
+    "--temperature",
+    "0.3",
 ]
 MAIA_CACHE_COMMAND = [
     "maia3-cache",

@@ -13,7 +13,7 @@ behavior to the small Flask/python-chess state contract.
 | Lichess play feature | Upstream source | Maia implementation | Status |
 | --- | --- | --- | --- |
 | Responsive board/table/player layout | `ui/round/src/view/main.ts`, `ui/round/css/_app-layout.scss`, `_layout.scss` | Snabbdom view in `web/view.ts`, responsive desktop/mobile/zen rules in `web/style.scss` | Implemented |
-| Drag and click moves, coordinates, legal destinations, animation, last move, check | `ui/round/src/ground.ts` | Chessground config in `web/controller.ts`; FEN/dests/check/last move supplied only by `backend/app.py` | Implemented |
+| Drag and click moves, coordinates, legal destinations, animation, last move, check | `ui/round/src/ground.ts` | Chessground config in `web/controller.ts`; FEN/dests/check/last move supplied only by `backend/game.py` | Implemented |
 | Right-drag arrows, right-click circles, modifier colors, context-menu suppression | `ui/round/src/ground.ts` | Chessground drawable configuration in `web/controller.ts` plus Snabbdom help view | Implemented |
 | SAN move table and active move | `ui/round/src/view/replay.ts`, `ui/round/css/_moves-col2.scss` | Python SAN/history; Snabbdom-rendered Lila `aPp`/`qZM`/`Z7yx` notation | Implemented |
 | First/previous/next/latest replay controls | `ui/round/src/view/replay.ts` | Six-cell replay bar with live-position glow | Implemented |
@@ -23,15 +23,15 @@ behavior to the small Flask/python-chess state contract.
 | Flip, zen, board menu, help shortcuts | `ui/round/src/keyboard.ts`, `view/boardMenu.ts` | F, Z, H, ?, Escape plus menu UI | Implemented |
 | Exact promotion geometry and order | `ui/lib/src/game/promotion.ts`, `ui/lib/css/chess/_promotion.scss` | Adapted Snabbdom promotion view in `web/lila/promotion.ts` | Implemented |
 | Relative captured pieces and `+N` value | `ui/lib/src/game/material.ts`, `ui/lib/src/game/view/material.ts`, `ui/round/css/_material.scss` | Python computes role-count differences and 9/5/3/3/1 score for every replay ply; Cburnett mini-pieces render above/below board | Implemented |
-| Player rows and turn indication | `ui/round/src/view/user.ts`, `view/table.ts`, `view/clock.ts` | Maia 1500 / configured `MODEL_NAME` and You / White rows; active untimed `∞` clock follows the live turn | Implemented |
+| Player color, orientation, rows, and turn indication | `ui/round/src/ground.ts`, `view/main.ts`, `view/replay.ts`, `view/table.ts`, `view/clock.ts` | The API exposes `humanColor`; the selected player color is at the bottom by default, Chessground's `opposite` helper derives the top color, and the active untimed `∞` clock follows the live turn | Implemented |
 | Move/capture/check/checkmate sounds and sound toggle | `ui/round/src/ctrl.ts`, `ui/site/src/sound.ts`, `public/sound/standard` | Official pinned Lichess MP3 assets; Python emits Lila's base move/capture plus optional check/mate sequence, while separate human and Maia responses preserve move-by-move timing | Implemented |
 | Board preferences | `ui/round/src/view/boardMenu.ts` | Flip, zen, blindfold, coordinates, sound, PGN copy, persistent local preferences | Implemented |
 | Takeback, claim draw, resign confirmation | `ui/round/src/view/table.ts`, `view/button.ts` | Local action route; Python pops a human/Maia pair, validates draw claims, or records resignation | Implemented |
 | Result and termination text in notation | `ui/round/src/view/replay.ts` | Result plus checkmate/stalemate/material/repetition/rule/resignation reason | Implemented |
-| New game/rematch behavior | `ui/round/src/view/button.ts` | Immediate New Game resets the standard position without restarting Maia | Implemented |
+| New game, side selection, and FEN start | `ui/round/src/view/button.ts`, `ui/lib/src/setup/view/color.ts`, `ui/lobby/src/view/setup/components/colorButtons.ts`, `fenInput.ts` | New Game opens a focused setup dialog for the standard board or a validated FEN and White/Black color cards; Maia moves automatically when the FEN's turn belongs to the bot | Implemented |
 | Compact single-column move strip | `ui/round/css/_moves-col1.scss` | Horizontal, autoscrolling notation and stacked board/panel below 850 px | Implemented |
-| Analysis tools composition and engine status | `ui/analyse/src/view/tools.ts`, `ui/lib/src/ceval/view/main.ts`, `ui/lib/css/ceval/_ctrl.scss` | Local `analyse__tools` and `ceval` adapter renders Stockfish depth, POV, loading bar, and Lila-formatted evaluation | Implemented |
-| Explorer-style move probability table | `ui/analyse/src/explorer/explorerView.ts`, `ui/analyse/css/explorer/_explorer.scss` | Lila `explorer-box` / `table.moves` structure adapted to Maia 1500 probability, policy rank, Stockfish score, PGN marker, and remaining mass | Implemented |
+| Analysis tools composition and engine status | `ui/analyse/src/view/tools.ts`, `ui/lib/src/ceval/view/main.ts`, `ui/lib/css/ceval/_ctrl.scss` | Local `analyse__tools` and `ceval` adapter renders current-position Stockfish depth, loading bar, and Lila-formatted White-positive evaluation | Implemented |
+| Explorer-style move probability table | `ui/analyse/src/explorer/explorerView.ts`, `ui/analyse/css/explorer/_explorer.scss` | Lila `explorer-box` / `table.moves` structure adapted to ranked Maia moves, Stockfish scores, percentage bars, PGN markers, and remaining mass | Implemented |
 | Candidate hover arrows | `ui/analyse/src/explorer/explorerUtil.ts`, `ui/analyse/src/autoShape.ts` | Native delegated row hover/focus sets a `paleBlue` Chessground auto-shape | Implemented |
 | Clickable analysis variation tree | `ui/analyse/src/treeView/columnView.ts`, `inlineView.ts`, `ui/lib/src/tree`, `ui/lib/css/tree/_tree.scss` | Lila `tview2` column-tree DOM and branch styling; imported mainline and local sidelines are clickable, keyboard focusable, and autoscroll to the active node | Implemented |
 | Play moves into analysis | `ui/analyse/src/ctrl.ts`, `ground.ts` | Candidate clicks or moves by either color on Chessground select an existing child or add a Python-validated variation node, including promotions | Implemented |
@@ -46,7 +46,7 @@ behavior to the small Flask/python-chess state contract.
 - Remote draw/takeback offers, opponent-gone timers, abort, rematch negotiation,
   lag/online signals, rating changes, spectators, chat, tournaments, Swiss,
   simul, forecasts, and “new opponent”: these require another user or the
-  Lichess server. Local takeback, draw claim, resignation, New Game, and PGN copy
+  Lichess server. Local takeback, draw claim, resignation, side-selectable new games, and PGN copy
   cover the corresponding single-player actions.
 - Remote Lichess analysis links, voice move input, account preference pages, haptic
   account settings, and Lichess's alternate nonvisual UI are separate optional
@@ -61,6 +61,11 @@ behavior to the small Flask/python-chess state contract.
 - TypeScript strict check and Vite production build pass.
 - Python contract checks cover legal moves, SAN/replay snapshots, material and
   score, takeback, resignation, draw claim, PGN result, Elo 1500, and cleanup.
+- White- and Black-side game flows verify turn ownership, Maia's automatic move,
+  player-oriented board rendering, standard/FEN roots, PGN colors and setup
+  headers, invalid-FEN rejection, and resignation results.
+- A real cached Maia3 UCI process was exercised as White and returned `1. e4`
+  before the Black-side player's first turn.
 - A real Maia3 UCI process was kept alive while `e4 e5 d4 exd4` was played; the
   rendered UI showed Black's captured pawn and `+1` and rolled both back on
   takeback.

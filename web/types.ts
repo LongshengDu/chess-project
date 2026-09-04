@@ -1,6 +1,6 @@
-import type { Key, Role } from '@lichess-org/chessground/types';
+import type { Color, Key, Role } from '@lichess-org/chessground/types';
 
-export type Color = 'white' | 'black';
+export type { Color } from '@lichess-org/chessground/types';
 export type MoveSound = 'move' | 'capture' | 'check' | 'checkmate';
 export type MaterialSide = { pieces: Role[]; score: number };
 export type Material = Record<Color, MaterialSide>;
@@ -17,6 +17,7 @@ export type PositionState = {
 export type RoundState = PositionState & {
   modelName: string;
   modelElo: number;
+  humanColor: Color;
   gameOver: boolean;
   result: string | null;
   status: string;
