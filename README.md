@@ -1,47 +1,54 @@
 # Maia Local Web Chess
 
 A small local web chess game with a Lichess-inspired play layout. You play
-White against the Maia3 model selected by `MODEL_NAME` in `backend/app.py` at
-Elo 1500. A small Snabbdom controller and Lichess
+White against the Maia3 model selected by `MAIA_MODEL_NAME` in
+`backend/settings.py` at Elo 1500. A small Snabbdom controller and Lichess
 round-style views render the interface around Chessground, while `python-chess`
 owns the game state, notation, and rules.
 
 ## Repository layout
 
 ```text
-backend/app.py         Flask application and chess API
+backend/app.py         Flask routes and process lifecycle
+backend/assets.py      verified Maia and Stockfish cache management
+backend/game.py        live game rules and response state
 backend/analysis.py    PGN parsing, Maia policy, and Stockfish scoring
+backend/settings.py    paths and engine configuration
+backend/chess_utils.py shared chess-state helpers
 pyproject.toml         Python/uv project configuration
 uv.lock                Locked Python dependencies
 web/                   Frontend source and all pnpm/TypeScript configuration
 deps/lichess-lila/     pinned Lichess source submodule (UI reference/assets)
 deps/maia/             pinned Maia3 source submodule
-deps/stockfish/        vendored Stockfish source and Windows executable
+backend/.cache/        downloaded Maia3 checkpoint and Stockfish executable
 ```
 
 The notebook experiments and their supporting files also remain at the root.
 
 ## Install and run
 
-Requirements: Python 3.10+, Git, Node.js 22+, `uv`, and a web browser. From the
-repository root in PowerShell:
+Requirements: Python 3.10+, Git, `uv`, an internet connection for initial setup,
+and a web browser. From the repository root in PowerShell:
 
 ```powershell
 git submodule update --init --depth 1
 uv sync
-uv run python -c "from backend.app import ensure_model_cached; ensure_model_cached()"
+uv run python -m backend.assets
 uv run web/build.py
 uv run python .\backend\app.py
 ```
 
 Open <http://127.0.0.1:5000>. Stop the server with `Ctrl+C`.
 
-The cache command resolves `MODEL_NAME` through Maia3's model registry and
+The cache command resolves `MAIA_MODEL_NAME` through Maia3's model registry and
 downloads the selected checkpoint into the project-local ignored
-`backend/.cache/maia3` directory. Server startup checks that cache before
-launching Maia, and the UCI process runs in local-files-only mode so model
-downloads cannot consume its initialization timeout. After the initial setup,
-rebuild the frontend only when `web/` changes; the normal run command is:
+`backend/.cache/maia3` directory. It also selects the matching official Windows,
+Linux, or macOS binary from the latest Stockfish GitHub release, verifies
+GitHub's SHA-256 digest, and extracts it into `backend/.cache/stockfish`. Server
+startup ensures both caches exist before launching Maia; the Maia UCI process
+runs in local-files-only mode so model downloads cannot consume its
+initialization timeout. After the initial setup, rebuild the frontend only when
+`web/` changes; the normal run command is:
 
 ```powershell
 uv run python .\backend\app.py
@@ -105,11 +112,15 @@ loading treatment, and explorer-row hover arrows on Chessground. The only table-
 the Maia probability visualization and the imported-PGN marker. Source mappings
 are recorded in `web/lila/README.md`.
 
-Stockfish searches the displayed Maia candidates and the played PGN move in one
-depth-12 MultiPV search. Evaluations are shown from the side-to-move's point of
-view. Maia is loaded lazily from `backend/.cache/maia3`, and the vendored
-`deps/stockfish/stockfish-windows-x86-64-avx2.exe` starts only when analysis is
-first requested. Imported analysis is separate from the live game state.
+Stockfish evaluates the currently displayed position before the next move, then
+searches the displayed Maia candidates and the played PGN move in a depth-12
+MultiPV search. Evaluations always use White's point of view: positive means
+White is better and negative means Black is better. Maia is loaded lazily
+from `backend/.cache/maia3`, and the platform-specific
+engine in `backend/.cache/stockfish` starts only when analysis is first
+requested. Completed Maia and Stockfish results are cached by analysis-tree
+path, so revisiting a move does not run the engines again; importing a new PGN
+clears the cache. Imported analysis is separate from the live game state.
 
 Click any Maia candidate to follow it. If it is not the imported continuation,
 it is added as a Lila-style variation; click any move in the analysis tree to
@@ -126,8 +137,10 @@ state. The separable behavior and assets are adapted to the local Flask API.
 ## Development
 
 Run `uv run web/build.py` from the repository root after editing the frontend.
-The script uses Node.js 22+ directly and bootstraps the pinned pnpm version when
-`web/node_modules` is missing, so a global pnpm installation is not required.
+The script uses an existing Node.js 22+ installation when available. Otherwise,
+it downloads and verifies an official project-local Node.js build, then
+bootstraps the pinned pnpm version and any missing frontend packages. Global
+Node.js and pnpm installations are not required.
 The generated `web/dist/` directory contains no hand-written application logic. Python and uv
 configuration remains at the repository root, while all Node, pnpm, Vite, and
 TypeScript configuration lives under `web/`. Dependency sources remain separate

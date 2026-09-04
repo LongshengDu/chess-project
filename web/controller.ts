@@ -433,6 +433,7 @@ export class LocalRoundController {
   private selectAnalysisNode(node: AnalysisTreeNode): void {
     const tree = this.analysisTree;
     if (!tree || this.analysisBusy || !tree.select(node)) return;
+    this.analysisResult = node.analysis;
     this.analysisError = undefined;
     this.redrawAndSync();
     this.playSounds(node.position.moveSounds);
@@ -462,6 +463,7 @@ export class LocalRoundController {
       const step = await analysisApi.move(ply, moves, uci);
       if (!this.analysisTree || this.analysisTree !== tree) return;
       const node = tree.add(step);
+      this.analysisResult = node.analysis;
       this.analysisBusy = undefined;
       document.body.classList.remove('thinking');
       this.redrawAndSync();
@@ -479,14 +481,33 @@ export class LocalRoundController {
     const tree = this.analysisTree;
     if (!this.analysis || !tree) return;
     const request = ++this.analysisRequest;
+    const node = tree.current;
+    if (node.analysis) {
+      this.analysisResult = node.analysis;
+      this.analysisBusy = undefined;
+      this.analysisError = undefined;
+      document.body.classList.remove('thinking');
+      this.redraw();
+      return;
+    }
+
     const path = tree.requestPath;
+    this.analysisResult = undefined;
     this.analysisBusy = `${this.modelName} ${this.modelElo} + Stockfish are analysing...`;
     this.analysisError = undefined;
     document.body.classList.add('thinking');
     this.redraw();
     try {
       const result = await analysisApi.position(path.ply, path.moves);
-      if (request !== this.analysisRequest || !this.analysis || this.analysisTree !== tree) return;
+      if (
+        request !== this.analysisRequest ||
+        !this.analysis ||
+        this.analysisTree !== tree ||
+        tree.current !== node
+      ) {
+        return;
+      }
+      node.analysis = result;
       this.analysisResult = result;
       this.analysisBusy = undefined;
       document.body.classList.remove('thinking');

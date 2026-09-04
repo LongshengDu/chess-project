@@ -27,9 +27,10 @@ export function promotionView(
 ): VNode {
   const file = choice.destination.charCodeAt(0) - 97;
   const left = (orientation === 'white' ? file : 7 - file) * 12.5;
+  const color: Color = choice.destination[1] === '8' ? 'white' : 'black';
 
   return h(
-    'div#promotion-choice.promotion.' + (orientation === 'white' ? 'top' : 'bottom'),
+    'div#promotion-choice.promotion.cg-wrap.' + (orientation === 'white' ? 'top' : 'bottom'),
     {
       hook: onInsert(element => {
         element.addEventListener('click', () => finish());
@@ -60,7 +61,7 @@ export function promotionView(
             });
           }),
         },
-        [h(`piece.white.${roleNames[role]}`)],
+        [h(`piece.${color}.${roleNames[role]}`)],
       ),
     ),
   );

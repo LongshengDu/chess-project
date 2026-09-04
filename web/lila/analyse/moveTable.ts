@@ -51,15 +51,16 @@ function moveArrowAttributes(
 
 function probabilityBar(probability: number): VNode {
   const percent = Math.max(0, Math.min(100, probability * 100));
-  return h('div.bar.maia-bar', [
-    h('span.maia', {
-      attrs: {
-        style: `width: ${percent}%`,
-        title: `${percent.toFixed(1)}% Maia probability`,
-      },
-    }),
-    h('span.remainder', { attrs: { style: `width: ${100 - percent}%` } }),
-  ]);
+  const label = `${percent.toFixed(1)}%`;
+  return h(
+    'div.bar.maia-bar',
+    { attrs: { title: `${label} Maia probability`, 'aria-label': `${label} Maia probability` } },
+    [
+      h('span.maia', { attrs: { style: `width: ${percent}%` } }),
+      h('span.remainder', { attrs: { style: `width: ${100 - percent}%` } }),
+      h('strong.probability-label', label),
+    ],
+  );
 }
 
 function moveRow(move: AnalysisMove, continuation: boolean): VNode {
@@ -75,12 +76,11 @@ function moveRow(move: AnalysisMove, continuation: boolean): VNode {
     },
     [
       h('td.move-san', [
+        h('span.rank', `${move.rank}. `),
         h('span', move.san),
         move.played && h('em.pgn', 'PGN'),
         continuation && !move.played && h('em.line', 'LINE'),
       ]),
-      h('td', `${(move.probability * 100).toFixed(1)}%`),
-      h('td', `#${move.rank}`),
       h('td.eval', renderScore(move.stockfish)),
       h('td', probabilityBar(move.probability)),
     ],
@@ -95,7 +95,6 @@ function showMoveTable(opts: AnalysisToolsOpts, result: PositionAnalysis): VNode
     h('thead', [
       h('tr', [
         h('th', 'Move'),
-        h('th', { attrs: { colspan: 2 } }, `${opts.modelName} ${opts.modelElo}`),
         h('th', 'Stockfish'),
         h('th', 'Probability'),
       ]),
@@ -104,9 +103,7 @@ function showMoveTable(opts: AnalysisToolsOpts, result: PositionAnalysis): VNode
       ...result.moves.map(move => moveRow(move, continuations.has(move.uci))),
       result.otherProbability > 0.0005 &&
         h('tr.sum.other', [
-          h('td', 'Other'),
-          h('td', `${(result.otherProbability * 100).toFixed(1)}%`),
-          h('td', `${otherMoveCount} moves`),
+          h('td', `Other (${otherMoveCount} moves)`),
           h('td.eval', '—'),
           h('td', probabilityBar(result.otherProbability)),
         ]),
@@ -116,30 +113,27 @@ function showMoveTable(opts: AnalysisToolsOpts, result: PositionAnalysis): VNode
 
 // Adapted from ui/lib/src/ceval/view/main.ts:renderCeval.
 function renderCeval(opts: AnalysisToolsOpts): VNode {
-  const lead = opts.result?.moves[0];
+  const score = opts.result?.stockfish;
   const depth = opts.result?.stockfishDepth;
-  const turn = opts.result?.turn;
   return h(`div.ceval.enabled${opts.loading ? '.computing' : ''}`, [
     h(
       'pearl',
       {
         attrs: {
-          title: lead
-            ? `Stockfish evaluation after Maia's most likely move, ${lead.san}`
-            : 'Stockfish evaluation',
+          title: 'Stockfish evaluation of the current position',
         },
       },
-      lead ? renderScore(lead.stockfish) : h('icon.ddloader'),
+      opts.result ? renderScore(score) : h('icon.ddloader'),
     ),
     h('div.engine', [
-      h('div', lead ? `Maia #1 · ${lead.san}` : 'Maia human move model'),
+      h('div', 'Stockfish'),
       h(
         'div.info',
         opts.loading
           ? opts.loadingText ?? 'Analysing…'
           : opts.result
-            ? `Stockfish · depth ${depth ?? '—'} · ${turn} POV`
-            : `${opts.modelName} · ${opts.modelElo} Elo`,
+            ? `Current position · depth ${depth ?? '—'}`
+            : 'Current position evaluation',
       ),
     ]),
     h('div.bar', [h('span', { attrs: { style: `width: ${opts.loading ? 100 : 0}%` } })]),

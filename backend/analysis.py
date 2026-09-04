@@ -13,44 +13,24 @@ from maia3.uci import Maia3UCIEngine, parse_args
 from maia3.utils import mirror_move
 from torch.amp import autocast
 
-
-MAIA_ELO = 1500
-TOP_HUMAN_MOVES = 10
-STOCKFISH_DEPTH = 12
-
-
-def _move_sounds(board: chess.Board, captured: bool) -> list[str]:
-    sounds = ["capture" if captured else "move"]
-    if board.is_checkmate():
-        sounds.append("checkmate")
-    elif board.is_check():
-        sounds.append("check")
-    return sounds
-
-
-def _material(board: chess.Board) -> dict:
-    pieces = [
-        (chess.QUEEN, "queen", 9),
-        (chess.ROOK, "rook", 5),
-        (chess.BISHOP, "bishop", 3),
-        (chess.KNIGHT, "knight", 3),
-        (chess.PAWN, "pawn", 1),
-    ]
-    material = {
-        "white": {"pieces": [], "score": 0},
-        "black": {"pieces": [], "score": 0},
-    }
-    score = 0
-    for piece_type, role, value in pieces:
-        difference = len(board.pieces(piece_type, chess.WHITE)) - len(
-            board.pieces(piece_type, chess.BLACK)
-        )
-        side = "white" if difference > 0 else "black"
-        material[side]["pieces"].extend([role] * abs(difference))
-        score += difference * value
-    material["white"]["score"] = max(score, 0)
-    material["black"]["score"] = max(-score, 0)
-    return material
+if __package__:
+    from .chess_utils import material, move_sounds
+    from .settings import (
+        MAIA_ELO,
+        STOCKFISH_DEPTH,
+        STOCKFISH_HASH_MB,
+        STOCKFISH_THREADS,
+        TOP_HUMAN_MOVES,
+    )
+else:  # Support running backend/app.py directly.
+    from chess_utils import material, move_sounds
+    from settings import (
+        MAIA_ELO,
+        STOCKFISH_DEPTH,
+        STOCKFISH_HASH_MB,
+        STOCKFISH_THREADS,
+        TOP_HUMAN_MOVES,
+    )
 
 
 def _position_state(
@@ -90,7 +70,7 @@ def _position_state(
             [last_move.uci()[:2], last_move.uci()[2:4]] if last_move else None
         ),
         "check": board.is_check(),
-        "material": _material(board),
+        "material": material(board),
         "moveSounds": move_sounds,
         "ply": board.ply(),
         "dests": dests,
@@ -137,14 +117,19 @@ class MaiaPolicy:
         engine.history = self._history(board, engine.cfg.history)
 
         legal_mask = get_legal_moves_mask(board, engine.all_moves_dict)
-        tokens = engine._tokens_from_history(engine.history).unsqueeze(0).to(
-            engine.cfg.device
+        tokens = (
+            engine._tokens_from_history(engine.history)
+            .unsqueeze(0)
+            .to(engine.cfg.device)
         )
         elos = torch.tensor([MAIA_ELO], dtype=torch.long, device=engine.cfg.device)
         assert engine.model is not None
-        with torch.no_grad(), autocast(
-            "cuda",
-            enabled=engine.cfg.use_amp and engine.cfg.device.startswith("cuda"),
+        with (
+            torch.no_grad(),
+            autocast(
+                "cuda",
+                enabled=engine.cfg.use_amp and engine.cfg.device.startswith("cuda"),
+            ),
         ):
             move_logits, _, _ = engine.model(tokens, elos, elos)
 
@@ -157,7 +142,9 @@ class MaiaPolicy:
             policy_uci = move.uci()
             if board.turn == chess.BLACK:
                 policy_uci = mirror_move(policy_uci)
-            result.append((move, float(probabilities[engine.all_moves_dict[policy_uci]])))
+            result.append(
+                (move, float(probabilities[engine.all_moves_dict[policy_uci]]))
+            )
         return sorted(result, key=lambda item: item[1], reverse=True)
 
 
@@ -169,10 +156,41 @@ class StockfishScorer:
     def _get_engine(self) -> chess.engine.SimpleEngine:
         if self._engine is None:
             if not self._executable.exists():
-                raise RuntimeError(f"Stockfish executable not found: {self._executable}")
+                raise RuntimeError(
+                    f"Stockfish executable not found: {self._executable}"
+                )
             self._engine = chess.engine.SimpleEngine.popen_uci(str(self._executable))
-            self._engine.configure({"Threads": 8, "Hash": 512})
+            self._engine.configure(
+                {"Threads": STOCKFISH_THREADS, "Hash": STOCKFISH_HASH_MB}
+            )
         return self._engine
+
+    @staticmethod
+    def _result(info: dict) -> dict | None:
+        engine_score = info.get("score")
+        if engine_score is None:
+            return None
+
+        score = engine_score.pov(chess.WHITE)
+        mate = score.mate()
+        cp = score.score()
+        label = (
+            f"{'+' if mate >= 0 else '-'}M{abs(mate)}"
+            if mate is not None
+            else f"{(cp or 0) / 100:+.2f}"
+        )
+        return {"cp": cp, "mate": mate, "label": label}
+
+    def evaluate(self, board: chess.Board) -> tuple[dict | None, int | None]:
+        """Evaluate the board as shown, before either side's next move."""
+        info = self._get_engine().analyse(
+            board,
+            chess.engine.Limit(depth=STOCKFISH_DEPTH),
+        )
+        if not isinstance(info, dict):
+            return None, None
+        depth = int(info["depth"]) if "depth" in info else None
+        return self._result(info), depth
 
     def score(
         self,
@@ -197,15 +215,10 @@ class StockfishScorer:
             if not info.get("pv"):
                 continue
             move = info["pv"][0]
-            score = info["score"].pov(board.turn)
-            mate = score.mate()
-            cp = score.score()
-            label = (
-                f"{'+' if mate and mate > 0 else '-'}M{abs(mate)}"
-                if mate is not None
-                else f"{(cp or 0) / 100:+.2f}"
-            )
-            scores[move.uci()] = {"cp": cp, "mate": mate, "label": label}
+            result = self._result(info)
+            if result is None:
+                continue
+            scores[move.uci()] = result
             if "depth" in info:
                 depths.append(int(info["depth"]))
         return scores, min(depths) if depths else None
@@ -226,8 +239,11 @@ class PgnAnalysisApi:
         self._boards: list[chess.Board] = []
         self._moves: list[chess.Move] = []
         self._game_state: dict | None = None
+        self._analysis_cache: dict[tuple[int, tuple[str, ...]], dict] = {}
 
-    def _board_at(self, ply: int, variation_moves: list[str] | None = None) -> chess.Board:
+    def _board_at(
+        self, ply: int, variation_moves: list[str] | None = None
+    ) -> chess.Board:
         if self._game_state is None:
             raise ValueError("Import a PGN first")
         if ply < 0 or ply >= len(self._boards):
@@ -271,9 +287,7 @@ class PgnAnalysisApi:
             moves.append(move)
             uci_moves.append(move.uci())
             boards.append(board.copy(stack=True))
-            positions.append(
-                _position_state(board, move, _move_sounds(board, captured))
-            )
+            positions.append(_position_state(board, move, move_sounds(board, captured)))
 
         headers = game.headers
         white = headers.get("White", "White")
@@ -281,6 +295,7 @@ class PgnAnalysisApi:
         result = headers.get("Result", "*")
         self._boards = boards
         self._moves = moves
+        self._analysis_cache.clear()
         self._game_state = {
             "title": f"{white} – {black}",
             "subtitle": headers.get("Event", "Imported PGN"),
@@ -298,13 +313,18 @@ class PgnAnalysisApi:
         ply: int,
         variation_moves: list[str] | None = None,
     ) -> dict:
-        board = self._board_at(ply, variation_moves)
+        variation_path = tuple(variation_moves or ())
+        cache_key = (ply, variation_path)
+        cached = self._analysis_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        board = self._board_at(ply, list(variation_path))
+        position_score, position_depth = self._stockfish.evaluate(board)
         distribution = self._maia.probabilities(board)
         selected = distribution[:TOP_HUMAN_MOVES]
         played = (
-            self._moves[ply]
-            if not variation_moves and ply < len(self._moves)
-            else None
+            self._moves[ply] if not variation_moves and ply < len(self._moves) else None
         )
         if played is not None and all(move != played for move, _ in selected):
             played_probability = next(
@@ -331,16 +351,19 @@ class PgnAnalysisApi:
             )
 
         displayed_probability = sum(item["probability"] for item in moves)
-        return {
+        result = {
             "ply": ply,
             "turn": "white" if board.turn == chess.WHITE else "black",
             "elo": MAIA_ELO,
             "legalMoveCount": len(distribution),
             "moves": moves,
             "otherProbability": max(0.0, 1.0 - displayed_probability),
-            "stockfishDepth": depth,
+            "stockfish": position_score,
+            "stockfishDepth": position_depth if position_depth is not None else depth,
             "playedMove": played.uci() if played else None,
         }
+        self._analysis_cache[cache_key] = result
+        return result
 
     def play_variation_move(
         self,
@@ -362,9 +385,7 @@ class PgnAnalysisApi:
         return {
             "uci": move.uci(),
             "san": san,
-            "position": _position_state(
-                board, move, _move_sounds(board, captured)
-            ),
+            "position": _position_state(board, move, move_sounds(board, captured)),
         }
 
     def close(self) -> None:

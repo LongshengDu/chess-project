@@ -933,15 +933,13 @@ icon.ddloader {
   text-align: left;
 }
 
-.explorer-box .moves th:nth-child(2),
-.explorer-box .moves th:nth-child(3) {
+.explorer-box .moves th:nth-child(2) {
   text-align: right;
 }
 
-.explorer-box .moves th:first-child { width: 24%; }
-.explorer-box .moves th:nth-child(2) { width: 22%; }
-.explorer-box .moves th:nth-child(3) { width: 17%; }
-.explorer-box .moves th:last-child { width: 37%; }
+.explorer-box .moves th:first-child { width: 38%; }
+.explorer-box .moves th:nth-child(2) { width: 18%; }
+.explorer-box .moves th:last-child { width: 44%; }
 
 .explorer-box .moves tr:nth-child(even) {
   background: #f4f4f4;
@@ -982,8 +980,6 @@ icon.ddloader {
   font-weight: 600;
 }
 
-.explorer-box .moves td:nth-child(2),
-.explorer-box .moves td:nth-child(3),
 .explorer-box .moves td.eval {
   color: #777;
   font-size: 10px;
@@ -1010,17 +1006,26 @@ icon.ddloader {
   background: #3d75a3;
 }
 
+.explorer-box .move-san .rank {
+  color: #777;
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .explorer-box .moves td:last-child {
   padding-right: 7px;
 }
 
 .explorer-box .maia-bar {
+  position: relative;
   width: 100%;
+  height: 16px;
   display: flex;
 }
 
 .explorer-box .maia-bar span {
   height: 14px;
+  box-sizing: border-box;
   display: inline-block;
   overflow: hidden;
   border: 1px solid #9994;
@@ -1039,9 +1044,18 @@ icon.ddloader {
   background: #ddd;
 }
 
+.explorer-box .maia-bar .probability-label {
+  position: absolute;
+  inset: 0;
+  color: #333;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  text-shadow: 0 1px #fff9;
+}
+
 .explorer-box .moves tr.sum {
-  position: sticky;
-  bottom: 0;
   background: #e5ecd9;
   font-weight: 700;
 }

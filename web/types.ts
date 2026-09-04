@@ -86,6 +86,7 @@ export type PositionAnalysis = {
   legalMoveCount: number;
   moves: AnalysisMove[];
   otherProbability: number;
+  stockfish: StockfishScore | null;
   stockfishDepth: number | null;
   playedMove: string | null;
 };

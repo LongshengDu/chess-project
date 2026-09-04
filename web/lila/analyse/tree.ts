@@ -1,5 +1,10 @@
 // Small local tree model following Lila's root/node/path analysis structure.
-import type { AnalysisGame, AnalysisPositionState, AnalysisVariationStep } from '../../types';
+import type {
+  AnalysisGame,
+  AnalysisPositionState,
+  AnalysisVariationStep,
+  PositionAnalysis,
+} from '../../types';
 
 export interface AnalysisTreeNode {
   id: string;
@@ -13,6 +18,7 @@ export interface AnalysisTreeNode {
   parent?: AnalysisTreeNode;
   children: AnalysisTreeNode[];
   preferredChild?: string;
+  analysis?: PositionAnalysis;
 }
 
 export class AnalysisTree {
