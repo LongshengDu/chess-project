@@ -120,7 +120,7 @@ body {
   background: #dcedca;
 }
 
-.material.cg-wrap {
+.board-side > .material {
   width: 100%;
   height: 27px;
   display: flex;
@@ -131,26 +131,40 @@ body {
   white-space: nowrap;
 }
 
-.material-group {
-  display: inline-flex;
-  margin-left: 8px;
+.board-side > .material div {
+  display: inline-block;
+  margin-left: 10px;
 }
 
-.material.cg-wrap piece {
-  position: relative;
+.board-side > .material mpiece {
+  display: inline-block;
+  margin-left: -10px;
+  background-size: cover;
   width: 26px;
   height: 26px;
-  margin-left: -8px;
-  display: inline-block;
-  background-size: cover;
-  z-index: auto;
 }
 
-.material.cg-wrap piece.pawn {
-  margin-left: -12px;
+.board-side > .material mpiece.pawn {
+  background-image: url('../deps/lichess-lila/public/piece/mono/P.svg');
 }
 
-.material strong {
+.board-side > .material mpiece.bishop {
+  background-image: url('../deps/lichess-lila/public/piece/mono/B.svg');
+}
+
+.board-side > .material mpiece.knight {
+  background-image: url('../deps/lichess-lila/public/piece/mono/N.svg');
+}
+
+.board-side > .material mpiece.rook {
+  background-image: url('../deps/lichess-lila/public/piece/mono/R.svg');
+}
+
+.board-side > .material mpiece.queen {
+  background-image: url('../deps/lichess-lila/public/piece/mono/Q.svg');
+}
+
+.board-side > .material score {
   margin-left: 3px;
   color: #777;
   font-weight: 400;
@@ -1584,12 +1598,12 @@ body.zen .player {
     font-size: 24px;
   }
 
-  .material.cg-wrap {
+  .board-side > .material {
     height: 24px;
     padding-left: 7px;
   }
 
-  .material.cg-wrap piece {
+  .board-side > .material mpiece {
     width: 23px;
     height: 23px;
   }

@@ -77,17 +77,21 @@ destination object to Chessground's required `Map`; it does not calculate
 moves. Promotion choices are also supplied by Python. Stopping the server runs
 a `finally` block that sends the engine its UCI quit command.
 
-The frontend follows Lila's controller → view → Snabbdom patch loop and reuses
-adapted Lila helpers for VNodes, wheel replay, held replay buttons, promotion
-geometry, round selectors, and responsive styling. Chessground is mounted from
-a Snabbdom insertion hook and remains stable across redraws. Site-wide Lila
-sockets, accounts, translations, chat, tournaments, and clocks are not loaded.
+The frontend follows Lila's controller → view → Snabbdom patch loop. It imports
+Lila's VNode helpers, wheel replay, pointer/hold handling, promotion controller,
+captured-material renderer, and analysis-node completion directly from the
+pinned source tree. Chessground is mounted from a Snabbdom insertion hook and
+remains stable across redraws. Site-wide Lila sockets, accounts, translations,
+chat, tournaments, and clocks are not loaded.
 
-Python returns a display snapshot for every ply, including relative captured
-material and material score. The move sheet, navigation buttons, mouse wheel,
-and Lichess keyboard shortcuts use those snapshots to replay the game without
-implementing chess rules in TypeScript. Chessground provides right-drag arrows
-and circles, and promotion uses an in-board queen/knight/rook/bishop chooser.
+Python returns a display snapshot for every ply, including the authoritative
+board FEN and relative captured-material metadata. Lila's material view renders
+the FEN directly, while the local metadata retains the existing accessible
+description. The move sheet, navigation buttons, mouse wheel, and Lichess
+keyboard shortcuts use those snapshots to replay the game without moving game
+authority out of Python. Chessground provides right-drag arrows and circles,
+and Lila's promotion controller supplies the in-board
+queen/knight/rook/bishop chooser.
 
 The controls provide local takeback, draw claim, resign confirmation, and a
 Lila-style New Game setup dialog. New games can use the standard initial board
@@ -109,12 +113,15 @@ the panel displays the ten most likely human moves, the imported PGN move when
 it falls outside that top ten, and the probability mass of the remaining legal
 moves. The percentages therefore always total 100%.
 
-The analysis surface is a focused Lila adaptation rather than a separate card
-UI: it uses the upstream `analyse__tools` ordering, `analyse__moves` replay,
-ceval engine header, explorer `table.moves` structure, evaluation formatter,
-loading treatment, and explorer-row hover arrows on Chessground. The only table-specific additions are
-the Maia probability visualization and the imported-PGN marker. Source mappings
-are recorded in `web/lila/README.md`.
+The analysis surface is a focused Lila-compatible adapter rather than a
+separate card UI: it uses the upstream `analyse__tools` ordering,
+`analyse__moves` replay, ceval engine header, explorer `table.moves` structure,
+evaluation formatting, loading treatment, and explorer-row hover arrows on
+Chessground. Its nodes use Lila's direct standard-node completion and canonical
+two-character IDs. The table remains local because Maia probabilities and the
+Python Stockfish response are intentionally different from Lila's explorer and
+browser-ceval controller contracts. Source mappings are recorded in
+`web/lila/README.md`.
 
 Stockfish evaluates the currently displayed position before the next move, then
 searches the displayed Maia candidates and the played PGN move in a depth-12
@@ -134,9 +141,11 @@ its imported ply, validates every move and promotion, and supplies the next
 position's legal destinations before Maia and Stockfish run again.
 
 See [LICHESS_UI_AUDIT.md](LICHESS_UI_AUDIT.md) for the source-by-source feature
-comparison. Lichess's round controller is intentionally not imported because
-it depends on Lichess sockets, accounts, tournaments, translations, and server
-state. The separable behavior and assets are adapted to the local Flask API.
+comparison. Lichess's round and bot-play controllers are intentionally not
+imported: the former requires Lichess server state, and the latter makes
+chessops own local game rules. Both conflict with this app's authoritative
+Flask/python-chess/Maia/Stockfish design. Separable leaf behavior is imported
+directly; only the API-specific orchestration and views remain local.
 
 ## Development
 

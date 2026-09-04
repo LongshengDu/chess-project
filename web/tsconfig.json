@@ -5,7 +5,22 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/game": ["../deps/lichess-lila/ui/lib/src/game/interfaces.ts"],
+      "@/view": ["../deps/lichess-lila/ui/lib/src/view/snabbdom.ts"],
+      "@/*": ["../deps/lichess-lila/ui/lib/src/*"],
+      "@badrap/result": ["node_modules/@badrap/result"],
+      "@lichess-org/chessground": ["node_modules/@lichess-org/chessground/dist/chessground.d.ts"],
+      "@lichess-org/chessground/*": ["node_modules/@lichess-org/chessground/dist/*.d.ts"],
+      "chessops": ["node_modules/chessops/dist/types/index.d.ts"],
+      "chessops/*": ["node_modules/chessops/dist/types/*.d.ts"],
+      "snabbdom": ["node_modules/snabbdom/build/index.d.ts"]
+    },
     "types": ["vite/client"]
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "../deps/lichess-lila/ui/@types/lichess/index.d.ts"
+  ]
 }

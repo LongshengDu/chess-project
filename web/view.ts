@@ -1,15 +1,55 @@
-import type { Role } from '@lichess-org/chessground/types';
 import { opposite } from '@lichess-org/chessground/util';
+import type { Role } from '@lichess-org/chessground/types';
 import type { VNode } from 'snabbdom';
 
+import { repeater } from '../deps/lichess-lila/ui/lib/src/common';
+import { renderMaterialDiffs } from '../deps/lichess-lila/ui/lib/src/game/view/material';
+import { addPointerListeners } from '../deps/lichess-lila/ui/lib/src/pointer';
+import { hl as h, onInsert } from '../deps/lichess-lila/ui/lib/src/view/snabbdom';
 import type { LocalRoundController } from './controller';
 import { gameSetup } from './lila/gameSetup';
 import { renderAnalysisTools } from './lila/analyse/moveTable';
 import { renderAnalysisTree } from './lila/analyse/treeView';
-import { promotionView } from './lila/promotion';
-import { repeatOnHold } from './lila/repeater';
-import { h, onInsert } from './lila/snabbdom';
-import type { Color, Material, MaterialSide, RoundPrefs } from './types';
+import type { Color, MaterialSide, RoundPrefs } from './types';
+
+const promotionRoles: Role[] = ['queen', 'knight', 'rook', 'bishop'];
+
+// PromotionCtrl is reused unchanged. This small mount adapter supplies the
+// classes expected by our sibling-to-Chessground layout and retains the
+// keyboard semantics that the local UI already exposed.
+function promotionView(ctrl: LocalRoundController): VNode | string | null | undefined {
+  const promotion = ctrl.promotion.view();
+  if (!promotion || typeof promotion === 'string') return promotion;
+
+  promotion.data ??= {};
+  promotion.data.class = { ...promotion.data.class, promotion: true, 'cg-wrap': true };
+  promotion.children?.forEach((child, index) => {
+    if (!child || typeof child !== 'object' || child.sel !== 'square') return;
+    const role = promotionRoles[index];
+    if (!role) return;
+    child.data ??= {};
+    child.data.attrs = {
+      ...child.data.attrs,
+      role: 'button',
+      tabindex: '0',
+      'aria-label': `Promote to ${role}`,
+    };
+    const upstreamInsert = child.data.hook?.insert;
+    child.data.hook = {
+      ...child.data.hook,
+      insert: vnode => {
+        upstreamInsert?.(vnode);
+        (vnode.elm as HTMLElement).addEventListener('keydown', event => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.stopPropagation();
+          ctrl.promotion.finish(role);
+        });
+      },
+    };
+  });
+  return promotion;
+}
 
 function click(action: () => void) {
   return onInsert<HTMLElement>(element => element.addEventListener('click', action));
@@ -45,7 +85,21 @@ function repeatButton(
     {
       attrs: { type: 'button', title, 'aria-label': title },
       props: { disabled },
-      hook: onInsert<HTMLButtonElement>(element => repeatOnHold(element, action)),
+      hook: onInsert<HTMLButtonElement>(element =>
+        {
+          addPointerListeners(element, {
+            click: () => repeater(action, () => element.disabled),
+            hold: 'click',
+          });
+          // Lila handles replay keys globally. These local buttons were also
+          // keyboard-activatable before adopting its pointer helper.
+          element.addEventListener('keydown', event => {
+            if (element.disabled || event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            action();
+          });
+        },
+      ),
     },
     label,
   );
@@ -91,44 +145,6 @@ function player(color: Color, ctrl: LocalRoundController): VNode {
         '∞',
       ),
     ],
-  );
-}
-
-function groupMaterial(side: MaterialSide, color: Color): VNode[] {
-  const groups: VNode[] = [];
-  let current: Role | undefined;
-  let pieces: VNode[] = [];
-
-  const flush = () => {
-    if (pieces.length) groups.push(h('span.material-group', pieces));
-    pieces = [];
-  };
-
-  side.pieces.forEach(role => {
-    if (current !== role) {
-      flush();
-      current = role;
-    }
-    pieces.push(h(`piece.${color}.${role}`));
-  });
-  flush();
-  if (side.score > 0) groups.push(h('strong', `+${side.score}`));
-  return groups;
-}
-
-function material(color: Color, data: Material, position: 'top' | 'bottom'): VNode {
-  const side = data[color];
-  const description = side.pieces.length
-    ? `${color} material advantage: ${side.pieces.join(', ')}${side.score ? `, plus ${side.score}` : ''}`
-    : `${color} has no material advantage`;
-  return h(
-    `div#${color}-material.material.cg-wrap`,
-    {
-      key: `material-${color}`,
-      class: { [`material-${position}`]: true },
-      attrs: { 'aria-label': description },
-    },
-    groupMaterial(side, color),
   );
 }
 
@@ -342,6 +358,23 @@ function pgnDialog(ctrl: LocalRoundController): VNode | false {
   ]);
 }
 
+function describeMaterial(color: Color, side: MaterialSide): string {
+  return side.pieces.length
+    ? `${color} material advantage: ${side.pieces.join(', ')}${side.score ? `, plus ${side.score}` : ''}`
+    : `${color} has no material advantage`;
+}
+
+function decorateMaterial(node: VNode, color: Color, side: MaterialSide): VNode {
+  node.data ??= {};
+  node.data.key = `material-${color}`;
+  node.data.attrs = {
+    ...node.data.attrs,
+    id: `${color}-material`,
+    'aria-label': describeMaterial(color, side),
+  };
+  return node;
+}
+
 function gameSetupDialog(ctrl: LocalRoundController): VNode | false {
   if (!ctrl.gameSetupOpen) return false;
   return gameSetup({
@@ -400,10 +433,20 @@ export function roundView(ctrl: LocalRoundController): VNode {
   // and flipping swaps the top and bottom colors as one unit.
   const bottomColor = ctrl.orientation;
   const topColor = opposite(bottomColor);
-  const materialData = position?.material ?? {
-    white: { pieces: [], score: 0 },
-    black: { pieces: [], score: 0 },
-  };
+  const [topMaterial, bottomMaterial] = position
+    ? renderMaterialDiffs(
+        true,
+        bottomColor,
+        position.fen as FEN,
+        false,
+        [],
+        ctrl.analysisTree?.current.ply ?? ctrl.viewIndex,
+      )
+    : [h('div.material.material-top'), h('div.material.material-bottom')];
+  if (position) {
+    decorateMaterial(topMaterial, topColor, position.material[topColor]);
+    decorateMaterial(bottomMaterial, bottomColor, position.material[bottomColor]);
+  }
 
   const title = ctrl.analysis?.title ?? 'Maia Chess';
   const subtitle = ctrl.analysis?.subtitle ?? 'Standard • Casual • Untimed';
@@ -412,7 +455,7 @@ export function roundView(ctrl: LocalRoundController): VNode {
       attrs: { 'aria-label': 'Maia game' },
     }, [
       player(topColor, ctrl),
-      material(topColor, materialData, 'top'),
+      topMaterial,
       h(
         'div.board-frame.round__app__board.main-board',
         {
@@ -425,10 +468,10 @@ export function roundView(ctrl: LocalRoundController): VNode {
             attrs: { 'aria-label': 'Chess board' },
             hook: onInsert(ctrl.mountGround),
           }),
-          ctrl.promotion && promotionView(ctrl.promotion, ctrl.orientation, ctrl.finishPromotion),
+          promotionView(ctrl),
         ],
       ),
-      material(bottomColor, materialData, 'bottom'),
+      bottomMaterial,
       player(bottomColor, ctrl),
     ]),
     h('aside.game-panel.round__app__table', { attrs: { 'aria-label': 'Game notation and controls' } }, [

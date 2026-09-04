@@ -1,8 +1,8 @@
 // Focused adaptation of Lila's setup color cards and from-position FEN input.
 import type { VNode } from 'snabbdom';
 
+import { hl as h, onInsert } from '../../deps/lichess-lila/ui/lib/src/view/snabbdom';
 import type { Color } from '../types';
-import { h, onInsert } from './snabbdom';
 
 export interface GameSetupOpts {
   color: Color;

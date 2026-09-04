@@ -1,4 +1,9 @@
-// Small local tree model following Lila's root/node/path analysis structure.
+// Maia-specific metadata around Lila's canonical standard-chess tree nodes.
+// Node completion and compact two-character IDs come directly from the pinned
+// Lila source; this class only adapts the Flask analysis path and metadata.
+import { completeNode } from '../../../deps/lichess-lila/ui/lib/src/tree/node';
+import type { TreeNode } from '../../../deps/lichess-lila/ui/lib/src/tree/types';
+
 import type {
   AnalysisGame,
   AnalysisPositionState,
@@ -6,26 +11,24 @@ import type {
   PositionAnalysis,
 } from '../../types';
 
-export interface AnalysisTreeNode {
-  id: string;
-  ply: number;
-  uci?: string;
-  san?: string;
+export type AnalysisTreeNode = Omit<TreeNode, 'children'> & {
+  children: AnalysisTreeNode[];
   imported: boolean;
   position: AnalysisPositionState;
   basePly: number;
   variationMoves: string[];
+  path: string;
   parent?: AnalysisTreeNode;
-  children: AnalysisTreeNode[];
   preferredChild?: string;
   analysis?: PositionAnalysis;
-}
+};
+
+const completeStandardNode = completeNode('standard');
 
 export class AnalysisTree {
   readonly root: AnalysisTreeNode;
   current: AnalysisTreeNode;
 
-  private nextId = 0;
   private readonly nodes = new Map<string, AnalysisTreeNode>();
 
   constructor(game: AnalysisGame) {
@@ -54,7 +57,7 @@ export class AnalysisTree {
   }
 
   get atStart(): boolean {
-    return !this.current.parent;
+    return this.current === this.root;
   }
 
   get atEnd(): boolean {
@@ -66,15 +69,16 @@ export class AnalysisTree {
   }
 
   get continuationUcis(): string[] {
-    return this.current.children.map(child => child.uci).filter((uci): uci is string => Boolean(uci));
+    return this.current.children.map(child => child.uci).filter((uci): uci is Uci => Boolean(uci));
   }
 
-  node(id: string): AnalysisTreeNode | undefined {
-    return this.nodes.get(id);
+  node(path: string): AnalysisTreeNode | undefined {
+    return this.nodes.get(path);
   }
 
   child(uci: string): AnalysisTreeNode | undefined {
-    return this.current.children.find(node => node.uci === uci);
+    const id = this.nodeId(uci);
+    return this.current.children.find(child => child.id === id);
   }
 
   select(node: AnalysisTreeNode): boolean {
@@ -128,16 +132,34 @@ export class AnalysisTree {
     return node.children.find(child => child.id === node.preferredChild) ?? node.children[0];
   }
 
-  private makeNode(
-    data: Omit<AnalysisTreeNode, 'id' | 'ply' | 'children'>,
-  ): AnalysisTreeNode {
-    const node: AnalysisTreeNode = {
-      ...data,
-      id: `n${this.nextId++}`,
-      ply: data.position.ply,
+  private nodeId(uci: string): string {
+    return completeStandardNode({
+      ply: 0,
+      uci: uci as Uci,
+      fen: this.current.position.fen as FEN,
       children: [],
-    };
-    this.nodes.set(node.id, node);
+    }).id;
+  }
+
+  private makeNode(data: {
+    uci?: string;
+    san?: string;
+    imported: boolean;
+    position: AnalysisPositionState;
+    basePly: number;
+    variationMoves: string[];
+    parent?: AnalysisTreeNode;
+  }): AnalysisTreeNode {
+    const node = completeStandardNode({
+      ply: data.position.ply,
+      uci: data.uci as Uci | undefined,
+      san: data.san,
+      fen: data.position.fen as FEN,
+      children: [],
+    }) as AnalysisTreeNode;
+    Object.assign(node, data);
+    node.path = data.parent ? data.parent.path + node.id : '';
+    this.nodes.set(node.path, node);
     return node;
   }
 }

@@ -1,51 +1,54 @@
-# Lila UI compatibility slice
+# Lila UI integration boundary
 
-These modules keep the local frontend close to the pinned Lila round UI without
-loading Lila's site runtime. Refresh them deliberately when the
-`deps/lichess-lila` submodule changes.
+The frontend imports reusable leaf modules from the pinned
+`deps/lichess-lila` source tree. Vite resolves Lila's `@/` aliases into
+`ui/lib/src`, while this package supplies the exact dependency versions used by
+the pinned revision.
 
-| Local module | Pinned Lila source |
+## Direct source reuse
+
+| Used by Maia frontend | Pinned Lila source |
 | --- | --- |
-| `snabbdom.ts` | `ui/lib/src/view/snabbdom.ts` |
-| `stepwiseScroll.ts` | `ui/lib/src/view/stepwiseScroll.ts` |
-| `repeater.ts` | `ui/round/src/view/replay.ts` (`repeater` behavior) |
-| `promotion.ts` | `ui/lib/src/game/promotion.ts` |
-| `gameSetup.ts` | `ui/lib/src/setup/view/color.ts`, `ui/lobby/src/view/setup/components/colorButtons.ts`, and `fenInput.ts` |
-| `analyse/eval.ts` | `ui/lib/src/ceval/util.ts` (`renderEval`) |
-| `analyse/moveTable.ts` | `ui/analyse/src/view/tools.ts`, `explorer/explorerView.ts`, `explorer/explorerUtil.ts`, and `ui/lib/src/ceval/view/main.ts` |
-| `analyse/tree.ts` | `ui/lib/src/tree`, `ui/analyse/src/ctrl.ts` (root/node/path model) |
-| `analyse/treeView.ts` | `ui/analyse/src/treeView/columnView.ts`, `inlineView.ts`, and `ui/lib/css/tree/_tree.scss` |
+| Loose Snabbdom `hl` and `onInsert` helpers | `ui/lib/src/view/snabbdom.ts` |
+| Wheel replay accumulation | `ui/lib/src/view/stepwiseScroll.ts` |
+| Pointer-safe click/hold handling | `ui/lib/src/pointer.ts` |
+| Accelerating hold repetition | `ui/lib/src/common.ts` (`repeater`) |
+| Promotion state, geometry, rendering, and board mutation | `ui/lib/src/game/promotion.ts` (`PromotionCtrl`) |
+| Captured-material calculation and VNodes | `ui/lib/src/game/view/material.ts` (`renderMaterialDiffs`) |
+| Analysis-node completion and canonical IDs | `ui/lib/src/tree/node.ts` (`completeNode('standard')`) |
+| Chess piece and mono material images | `public/piece/cburnett`, `public/piece/mono` |
+| Standard move/capture/check/checkmate sound mapping | `public/sound/standard/Move.mp3`, `Capture.mp3`, `public/sound/Silence.mp3`, `standard/GenericNotify.mp3` |
 
-`web/view.ts` also preserves Lila's round selectors (`round__app`, `aPp`,
-`qZM`, `Z7yx`, `i5d`, and `bo3`) so behavior and SCSS can be compared or
-refreshed component by component. `LocalRoundController` replaces Lila's site,
-socket, account, tournament, translation, and clock dependencies with the
-local Flask API surface. The PGN surface follows Lila's tools order and uses
-its `analyse__tools` / `ceval` / `analyse__moves` / `explorer-box` /
-`table.moves` composition plus its explorer-row-to-`paleBlue`-Chessground-arrow
-interaction. Candidate clicks and legal Chessground moves enter the local Lila-style
-tree; Python validates and returns every new variation node.
+`web/view.ts` adds only the integration behavior that this app already needs
+around those modules. In particular, the promotion VNode receives the classes
+required by this sibling-to-Chessground mount and retains keyboard/ARIA
+activation. Material VNodes retain the prior IDs and accessible descriptions.
+Replay buttons retain native keyboard activation in addition to Lila's pointer
+and hold behavior.
 
-Player-side behavior follows `ui/round/src/ground.ts` and `view/main.ts`: the
-player color is the default board orientation, a separate flip flag reverses
-it, and the opposite color is rendered above the board. The local code imports
-Chessground's shared `Color` type and `opposite` helper instead of duplicating
-them. This supports games as White or Black without loading Lila's socket- and
-account-dependent round controller.
-The New Game dialog combines Lila's setup color-card structure with its
-from-position FEN input. Random color and the full clock/rating/variant lobby
-form are intentionally omitted from this local standard-chess surface.
-The color-dependent player and material siblings are keyed so Snabbdom moves
-the existing board host instead of replacing it. The mount hook also destroys
-and recreates Chessground if a future view change replaces that host, avoiding
-a controller that targets detached DOM.
+## Necessary local adapters
 
-Live-game sound timing follows `ui/round/src/ctrl.ts`: the local move sound is
-played before the later opponent move sound. Unlike Lila's socket-backed game,
-the local app gets both sound classifications from two small Python responses,
-so captures and checks remain authoritative without importing Lila's site-wide
-sound runtime or duplicating chess rules in TypeScript.
-Each ply follows Lila's base-plus-modifier sequence: move or capture first, then
-check or checkmate 100 ms later. The standard check is intentionally silent;
-checkmate uses the standard notification sound. A checking capture therefore
-still plays its capture sound instead of being collapsed into silence.
+| Local module | Why it remains local |
+| --- | --- |
+| `gameSetup.ts` | Lila's setup components require its global translations, mutable props, variants, lobby controller, board editor, and random-color flow. This app submits White/Black plus optional FEN to Flask. |
+| `analyse/eval.ts` | Lila's tiny formatter shares a module with site dialogs and engine-runtime imports, so it is not independently consumable. |
+| `analyse/moveTable.ts` | Maia probabilities and Python Stockfish results do not implement Lila's `AnalyseCtrl`, `OpeningData`, or browser-ceval contracts. |
+| `analyse/tree.ts` | Flask identifies a branch by imported base ply plus variation UCIs; the wrapper stores that API metadata around direct Lila nodes. |
+| `analyse/treeView.ts` | The upstream tree views require the full analyse controller, context menus, comments, glyphs, studies, translations, and preferences. |
+
+These adapters preserve Lila-compatible selectors and interaction patterns, but
+they are application code rather than copies intended to track upstream line
+for line.
+
+## Reuse ceiling
+
+Importing `ui/round` would require Lichess sockets, accounts, clocks,
+tournaments, translations, and server-rendered round data. Importing
+`ui/botPlay` would instead make chessops' in-browser `Game` authoritative and
+route bot moves through Lila's local bridge. Either choice would replace the
+required Python/python-chess/Maia/Stockfish architecture.
+
+The maintainable maximum is therefore direct reuse of the independent Lila
+leaf modules above, with a small local controller and API-specific views. When
+the submodule revision changes, run the strict frontend build and the browser
+checks in `LICHESS_UI_AUDIT.md` before accepting the update.

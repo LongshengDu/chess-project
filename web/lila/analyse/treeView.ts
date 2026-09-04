@@ -1,7 +1,11 @@
 // Focused adaptation of Lila's treeView/columnView.ts and lib tree SCSS DOM.
 import type { VNode } from 'snabbdom';
 
-import { h, onInsert, type LooseVNodes } from '../snabbdom';
+import {
+  hl as h,
+  onInsert,
+  type LooseVNodes,
+} from '../../../deps/lichess-lila/ui/lib/src/view/snabbdom';
 import type { AnalysisTree, AnalysisTreeNode } from './tree';
 
 function moveNumber(node: AnalysisTreeNode): number {
@@ -17,11 +21,11 @@ function renderMove(node: AnalysisTreeNode, tree: AnalysisTree, withIndex = fals
   return h(
     'move',
     {
-      key: node.id,
+      key: node.path,
       class: { active: node === tree.current, nongame: !node.imported },
       attrs: {
-        'data-node': node.id,
-        p: node.id,
+        'data-node': node.path,
+        p: node.path,
         role: 'button',
         tabindex: '0',
         title: node.imported ? `Jump to ${node.san}` : `Jump to variation ${node.san}`,

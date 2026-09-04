@@ -1,8 +1,8 @@
 // Focused adaptation of Lila's analyse tools, ceval, and explorer move table.
 import type { VNode } from 'snabbdom';
 
+import { hl as h, onInsert } from '../../../deps/lichess-lila/ui/lib/src/view/snabbdom';
 import type { AnalysisMove, PositionAnalysis } from '../../types';
-import { h, onInsert } from '../snabbdom';
 import { renderScore } from './eval';
 
 export interface AnalysisToolsOpts {

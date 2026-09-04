@@ -7,10 +7,10 @@ import captureUrl from '../deps/lichess-lila/public/sound/standard/Capture.mp3?u
 import checkUrl from '../deps/lichess-lila/public/sound/Silence.mp3?url';
 import checkmateUrl from '../deps/lichess-lila/public/sound/standard/GenericNotify.mp3?url';
 import moveUrl from '../deps/lichess-lila/public/sound/standard/Move.mp3?url';
+import { PromotionCtrl } from '../deps/lichess-lila/ui/lib/src/game/promotion';
+import stepwiseScroll from '../deps/lichess-lila/ui/lib/src/view/stepwiseScroll';
 import { analysisApi, roundApi } from './api';
 import { AnalysisTree, type AnalysisTreeNode } from './lila/analyse/tree';
-import stepwiseScroll from './lila/stepwiseScroll';
-import type { PromotionChoice } from './lila/promotion';
 import type {
   AnalysisGame,
   AnalysisPositionState,
@@ -23,17 +23,17 @@ import type {
   RoundState,
 } from './types';
 
-const promotionRoles: Record<PromotionRole, Role> = {
-  q: 'queen',
-  n: 'knight',
-  r: 'rook',
-  b: 'bishop',
+const promotionChars: Partial<Record<Role, PromotionRole>> = {
+  queen: 'q',
+  knight: 'n',
+  rook: 'r',
+  bishop: 'b',
 };
 
 export class LocalRoundController {
   state?: RoundState;
   viewIndex = 0;
-  promotion?: PromotionChoice;
+  readonly promotion: PromotionCtrl;
   menuOpen = false;
   helpOpen = false;
   confirmingResign = false;
@@ -68,6 +68,11 @@ export class LocalRoundController {
   };
 
   constructor(private readonly redraw: () => void) {
+    this.promotion = new PromotionCtrl(
+      effect => this.ground ? effect(this.ground) : undefined,
+      this.cancelPromotion,
+      redraw,
+    );
     document.body.classList.toggle('blindfold', this.prefs.blindfold);
   }
 
@@ -221,7 +226,7 @@ export class LocalRoundController {
   };
 
   flip = (): void => {
-    this.promotion = undefined;
+    if (this.promotion.dismiss()) this.cancelPromotion();
     this.boardFlipped = !this.boardFlipped;
     this.menuOpen = false;
     this.redrawAndSync();
@@ -392,34 +397,21 @@ export class LocalRoundController {
     }
   }
 
-  finishPromotion = (role?: PromotionRole): void => {
-    const choice = this.promotion;
-    this.promotion = undefined;
-    if (!choice || !role) {
-      if (this.analysis) this.analysisBusy = undefined;
-      else this.busy = undefined;
-      this.redrawAndSync();
-      return;
-    }
+  private cancelPromotion = (): void => {
+    if (this.analysis) this.analysisBusy = undefined;
+    else this.busy = undefined;
+    document.body.classList.remove('thinking');
+    this.redrawAndSync();
+  };
 
-    this.ground?.setPieces(
-      new Map([
-        [
-          choice.destination,
-          {
-            color: this.analysis ? this.position?.turn ?? 'white' : this.humanColor,
-            role: promotionRoles[role],
-            promoted: true,
-          },
-        ],
-      ]),
-    );
-    const uci = choice.origin + choice.destination + role;
+  private submitPromotion = (origin: Key, destination: Key, role: Role): void => {
+    const promotion = promotionChars[role];
+    if (!promotion) return this.cancelPromotion();
+    const uci = origin + destination + promotion;
     if (this.analysis) {
       this.analysisBusy = undefined;
       void this.playAnalysisMove(uci, true);
-    }
-    else void this.submitMove(uci);
+    } else void this.submitMove(uci);
   };
 
   clearShapes(): void {
@@ -454,7 +446,7 @@ export class LocalRoundController {
     const key = event.key;
 
     if (key === 'Escape') {
-      if (this.promotion) this.finishPromotion();
+      if (this.promotion.dismiss()) this.cancelPromotion();
       else if (this.helpOpen) this.setHelp(false);
       else if (this.confirmingResign) this.setConfirmingResign(false);
       else if (this.menuOpen) this.closeMenu();
@@ -477,10 +469,10 @@ export class LocalRoundController {
       if (!position || position.gameOver || this.analysisBusy) return;
       const roles = position.promotions[origin + destination] as PromotionRole[] | undefined;
       if (roles) {
-        this.promotion = { origin, destination, roles };
         this.analysisBusy = 'Choose a piece';
         this.ground?.set({ movable: { color: undefined, dests: new Map<Key, Key[]>() } });
-        this.redraw();
+        if (!this.promotion.start(origin, destination, { submit: this.submitPromotion }))
+          this.cancelPromotion();
         return;
       }
       await this.playAnalysisMove(origin + destination, true);
@@ -489,8 +481,9 @@ export class LocalRoundController {
     if (!this.state || !this.live || this.state.gameOver || this.busy) return;
     const roles = this.state.promotions[origin + destination] as PromotionRole[] | undefined;
     if (roles) {
-      this.promotion = { origin, destination, roles };
       this.lock('Choose a piece', true);
+      if (!this.promotion.start(origin, destination, { submit: this.submitPromotion }))
+        this.cancelPromotion();
       return;
     }
     await this.submitMove(origin + destination);
@@ -646,7 +639,7 @@ export class LocalRoundController {
     this.viewIndex = state.history.length - 1;
     this.busy = undefined;
     this.notice = undefined;
-    this.promotion = undefined;
+    this.promotion.dismiss();
     this.confirmingResign = false;
     document.body.classList.remove('thinking');
     this.redrawAndSync();

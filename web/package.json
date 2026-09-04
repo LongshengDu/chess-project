@@ -9,7 +9,9 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@badrap/result": "0.3.1",
     "@lichess-org/chessground": "10.1.1",
+    "chessops": "0.15.1",
     "snabbdom": "3.5.1"
   },
   "devDependencies": {

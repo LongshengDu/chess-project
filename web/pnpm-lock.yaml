@@ -8,9 +8,15 @@ importers:
 
   .:
     dependencies:
+      '@badrap/result':
+        specifier: 0.3.1
+        version: 0.3.1
       '@lichess-org/chessground':
         specifier: 10.1.1
         version: 10.1.1
+      chessops:
+        specifier: 0.15.1
+        version: 0.15.1
       snabbdom:
         specifier: 3.5.1
         version: 3.5.1
@@ -26,6 +32,10 @@ importers:
         version: 8.2.2(sass@1.103.1)
 
 packages:
+
+  '@badrap/result@0.3.1':
+    resolution: {integrity: sha512-ECvpsyZYknoRD0peG1K+UkX5llld3TyK1Ot9Cq2epSoWK19nyzpGKVl98sadSmohu5wHNuiDl+Ex9SVdcIjiFg==}
+    engines: {node: '>= 22'}
 
   '@lichess-org/chessground@10.1.1':
     resolution: {integrity: sha512-IBEs8+J64/zE8QB4NXxsvpjm/tHRjfQAdWwUh4xzqqN+RValgthWHemLnxsmtHFwuxvO4lHd+crp1ecgZxKVoQ==}
@@ -213,6 +223,9 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  chessops@0.15.1:
+    resolution: {integrity: sha512-hQDwv90AFkrPEsRJBebh3ZE+xDga25TCCv4lavNT2plZmd33UKNFYaZsE+7rafMbnBRrDEWUVsSYFqY3qCIGZw==}
 
   chokidar@5.0.0:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
@@ -416,6 +429,8 @@ packages:
 
 snapshots:
 
+  '@badrap/result@0.3.1': {}
+
   '@lichess-org/chessground@10.1.1': {}
 
   '@oxc-project/types@0.147.0': {}
@@ -523,6 +538,10 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  chessops@0.15.1:
+    dependencies:
+      '@badrap/result': 0.3.1
 
   chokidar@5.0.0:
     dependencies:

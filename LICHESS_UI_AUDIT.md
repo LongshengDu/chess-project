@@ -4,25 +4,38 @@ This app is compared against the official `lichess-org/lila` source pinned as
 the Git submodule `deps/lichess-lila` at commit
 `f4da67dc45bba6769600db33af925c05ae21a8d0`.
 
-The upstream round controller cannot run independently: it expects Lichess
-socket messages, account preferences, translations, tournaments, clocks, and
-server-rendered data. The app therefore reuses Chessground and the official
-standard sound files directly, while adapting the locally applicable round UI
-behavior to the small Flask/python-chess state contract.
+## Verdict
+
+The frontend previously used Lila directly only for Chessground and assets;
+several small helpers were local copies or reimplementations. It now imports
+the independently reusable Lila source for Snabbdom helpers, wheel navigation,
+pointer/hold handling, promotion, material rendering, and standard analysis
+node completion. The four obsolete local helper copies were removed.
+
+The remaining local code is not a disguised copy of the full Lila app. It is
+the integration boundary for the existing Flask/python-chess/Maia/Stockfish
+API and for Maia-specific analysis. Importing `ui/round` would pull in Lichess
+sockets and server state; importing `ui/botPlay` would move game authority to
+an in-browser chessops `Game`. Neither is compatible with the required backend
+design. Direct leaf-module reuse plus local API adapters is the practical
+maximum that preserves current and future functionality.
+
+## Feature and source audit
 
 | Lichess play feature | Upstream source | Maia implementation | Status |
 | --- | --- | --- | --- |
+| Loose Snabbdom VNodes and insert hooks | `ui/lib/src/view/snabbdom.ts` | Direct `hl` and `onInsert` imports in all local views | Direct reuse |
 | Responsive board/table/player layout | `ui/round/src/view/main.ts`, `ui/round/css/_app-layout.scss`, `_layout.scss` | Snabbdom view in `web/view.ts`, responsive desktop/mobile/zen rules in `web/style.scss` | Implemented |
 | Drag and click moves, coordinates, legal destinations, animation, last move, check | `ui/round/src/ground.ts` | Chessground config in `web/controller.ts`; FEN/dests/check/last move supplied only by `backend/game.py` | Implemented |
 | Right-drag arrows, right-click circles, modifier colors, context-menu suppression | `ui/round/src/ground.ts` | Chessground drawable configuration in `web/controller.ts` plus Snabbdom help view | Implemented |
 | SAN move table and active move | `ui/round/src/view/replay.ts`, `ui/round/css/_moves-col2.scss` | Python SAN/history; Snabbdom-rendered Lila `aPp`/`qZM`/`Z7yx` notation | Implemented |
 | First/previous/next/latest replay controls | `ui/round/src/view/replay.ts` | Six-cell replay bar with live-position glow | Implemented |
-| Hold previous/next to repeat | `ui/round/src/view/replay.ts` (`repeater`) | Adapted helper in `web/lila/repeater.ts` | Implemented |
-| Replay by mouse wheel over board | `ui/round/src/view/main.ts` | Adapted `stepwiseScroll` helper in `web/lila/stepwiseScroll.ts` | Implemented |
+| Hold previous/next to repeat | `ui/lib/src/common.ts`, `ui/lib/src/pointer.ts`, `ui/round/src/view/replay.ts` | Direct `repeater` and `addPointerListeners` imports; local callback targets the Python-backed replay state | Direct reuse + adapter |
+| Replay by mouse wheel over board | `ui/lib/src/view/stepwiseScroll.ts`, `ui/round/src/view/main.ts` | Direct `stepwiseScroll` import | Direct reuse |
 | Replay keyboard bindings | `ui/round/src/keyboard.ts` | Controller bindings for Left/K, Right/J, Up/0/Home, Down/$/End | Implemented |
 | Flip, zen, board menu, help shortcuts | `ui/round/src/keyboard.ts`, `view/boardMenu.ts` | F, Z, H, ?, Escape plus menu UI | Implemented |
-| Exact promotion geometry and order | `ui/lib/src/game/promotion.ts`, `ui/lib/css/chess/_promotion.scss` | Adapted Snabbdom promotion view in `web/lila/promotion.ts` | Implemented |
-| Relative captured pieces and `+N` value | `ui/lib/src/game/material.ts`, `ui/lib/src/game/view/material.ts`, `ui/round/css/_material.scss` | Python computes role-count differences and 9/5/3/3/1 score for every replay ply; Cburnett mini-pieces render above/below board | Implemented |
+| Exact promotion geometry and order | `ui/lib/src/game/promotion.ts`, `ui/lib/css/chess/_promotion.scss` | Direct `PromotionCtrl`; thin mount/accessibility adapter preserves this app's board placement and keyboard behavior | Direct reuse + adapter |
+| Relative captured pieces and `+N` value | `ui/lib/src/game/material.ts`, `ui/lib/src/game/view/material.ts`, `ui/round/css/_material.scss` | Direct `renderMaterialDiffs` from the Python-supplied FEN and pinned mono piece assets; existing Python metadata supplies the accessible description | Direct reuse + adapter |
 | Player color, orientation, rows, and turn indication | `ui/round/src/ground.ts`, `view/main.ts`, `view/replay.ts`, `view/table.ts`, `view/clock.ts` | The API exposes `humanColor`; the selected player color is at the bottom by default, Chessground's `opposite` helper derives the top color, and the active untimed `∞` clock follows the live turn | Implemented |
 | Move/capture/check/checkmate sounds and sound toggle | `ui/round/src/ctrl.ts`, `ui/site/src/sound.ts`, `public/sound/standard` | Official pinned Lichess MP3 assets; Python emits Lila's base move/capture plus optional check/mate sequence, while separate human and Maia responses preserve move-by-move timing | Implemented |
 | Board preferences | `ui/round/src/view/boardMenu.ts` | Flip, zen, blindfold, coordinates, sound, PGN copy, persistent local preferences | Implemented |
@@ -33,7 +46,7 @@ behavior to the small Flask/python-chess state contract.
 | Analysis tools composition and engine status | `ui/analyse/src/view/tools.ts`, `ui/lib/src/ceval/view/main.ts`, `ui/lib/css/ceval/_ctrl.scss` | Local `analyse__tools` and `ceval` adapter renders current-position Stockfish depth, loading bar, and Lila-formatted White-positive evaluation | Implemented |
 | Explorer-style move probability table | `ui/analyse/src/explorer/explorerView.ts`, `ui/analyse/css/explorer/_explorer.scss` | Lila `explorer-box` / `table.moves` structure adapted to ranked Maia moves, Stockfish scores, percentage bars, PGN markers, and remaining mass | Implemented |
 | Candidate hover arrows | `ui/analyse/src/explorer/explorerUtil.ts`, `ui/analyse/src/autoShape.ts` | Native delegated row hover/focus sets a `paleBlue` Chessground auto-shape | Implemented |
-| Clickable analysis variation tree | `ui/analyse/src/treeView/columnView.ts`, `inlineView.ts`, `ui/lib/src/tree`, `ui/lib/css/tree/_tree.scss` | Lila `tview2` column-tree DOM and branch styling; imported mainline and local sidelines are clickable, keyboard focusable, and autoscroll to the active node | Implemented |
+| Clickable analysis variation tree | `ui/analyse/src/treeView/columnView.ts`, `inlineView.ts`, `ui/lib/src/tree`, `ui/lib/css/tree/_tree.scss` | Direct `completeNode('standard')` supplies canonical nodes/IDs; the local Flask-path wrapper and `tview2` view keep imported mainline and Maia sidelines clickable and keyboard focusable | Direct reuse + adapter |
 | Play moves into analysis | `ui/analyse/src/ctrl.ts`, `ground.ts` | Candidate clicks or moves by either color on Chessground select an existing child or add a Python-validated variation node, including promotions | Implemented |
 
 ## Deliberately not applicable
@@ -59,6 +72,9 @@ behavior to the small Flask/python-chess state contract.
 ## Verification checklist
 
 - TypeScript strict check and Vite production build pass.
+- Direct-import browser checks cover pointer and keyboard replay, canonical
+  analysis paths, mainline/branch selection, material VNodes, and absence of
+  runtime errors under real pointer input.
 - Python contract checks cover legal moves, SAN/replay snapshots, material and
   score, takeback, resignation, draw claim, PGN result, Elo 1500, and cleanup.
 - White- and Black-side game flows verify turn ownership, Maia's automatic move,
@@ -78,5 +94,7 @@ behavior to the small Flask/python-chess state contract.
 - Variation checks click `d4` from the Maia table, play `...e5` directly on
   Chessground, verify both nodes appear in the `tview2` branch, then jump back
   to imported `e4`; the 390 px layout keeps both tree and explorer visible.
-- The promotion overlay was exercised from a promotion-ready Python position;
-  its four selectors loaded and queen promotion returned legal SAN.
+- The direct Lila promotion overlay was exercised in live play and PGN
+  analysis. All four piece images and accessible selectors loaded, Escape
+  restored the pawn and controls, and knight underpromotion returned legal
+  `g8=N` in both modes.

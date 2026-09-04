@@ -1,7 +1,9 @@
-// Source-compatible adaptation of lila/ui/lib/src/ceval/util.ts:renderEval.
 import type { StockfishScore } from '../../types';
 
-export function renderEval(e: number): string {
+// Lila's formatter is not independently importable: ceval/util.ts pulls the
+// site dialog and engine graph through its runtime imports. Keep this tiny,
+// source-mapped compatibility function until upstream exposes a pure module.
+function renderEval(e: number): string {
   e = Math.max(Math.min(Math.round(e / 10) / 10, 99), -99);
   return (e > 0 ? '+' : '') + e.toFixed(1);
 }
