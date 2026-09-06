@@ -36,9 +36,9 @@ STOCKFISH_RELEASE_API = (
     "https://api.github.com/repos/official-stockfish/Stockfish/releases/latest"
 )
 STOCKFISH_ASSETS = {
-    ("windows", "x86-64"): "stockfish-windows-x86-64-avx2.zip",
-    ("windows", "arm64"): "stockfish-windows-armv8.zip",
-    ("linux", "x86-64"): "stockfish-ubuntu-x86-64-avx2.tar",
-    ("darwin", "x86-64"): "stockfish-macos-x86-64-avx2.tar",
-    ("darwin", "arm64"): "stockfish-macos-m1-apple-silicon.tar",
+    ("windows", "x86-64"): "stockfish-windows-x86-64-universal.zip",
+    ("windows", "arm64"): "stockfish-windows-arm64-universal.zip",
+    ("linux", "x86-64"): "stockfish-linux-x86-64-universal.tar.gz",
+    ("darwin", "x86-64"): "stockfish-macos-universal.tar.gz",
+    ("darwin", "arm64"): "stockfish-macos-universal.tar.gz",
 }

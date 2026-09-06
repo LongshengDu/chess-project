@@ -261,10 +261,10 @@ def install_dependencies(
         npx_cli = find_npx_cli(node, env)
         if not npx_cli:
             raise SystemExit("The Node.js installation does not include Corepack or npm/npx.")
+        # npm 6's npx misparses --yes; npm_config_yes below works with both runners.
         command = [
             str(node),
             str(npx_cli),
-            "--yes",
             "--package",
             package_manager,
             manager,

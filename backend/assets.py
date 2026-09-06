@@ -63,7 +63,7 @@ def _stockfish_target() -> tuple[str, str, Path]:
             f"{platform.system()} {platform.machine()}"
         )
 
-    archive_suffix = Path(asset_name).suffix
+    archive_suffix = ".tar.gz" if asset_name.endswith(".tar.gz") else Path(asset_name).suffix
     executable_name = asset_name.removesuffix(archive_suffix)
     if system == "windows":
         executable_name += ".exe"
@@ -97,7 +97,15 @@ def _latest_stockfish_asset(asset_name: str) -> tuple[str, dict]:
         None,
     )
     if not asset:
-        raise RuntimeError(f"The latest Stockfish release has no {asset_name} asset")
+        available = ", ".join(
+            str(candidate.get("name"))
+            for candidate in release.get("assets", [])
+            if isinstance(candidate, dict)
+        )
+        raise RuntimeError(
+            f"Stockfish {release.get('tag_name')} has no {asset_name} asset. "
+            f"Available assets: {available}"
+        )
 
     tag = release.get("tag_name")
     digest = asset.get("digest")
@@ -179,7 +187,7 @@ def _copy_stockfish_from_archive(
                 shutil.copyfileobj(source, output)
         return
 
-    if asset_name.endswith(".tar"):
+    if asset_name.endswith((".tar", ".tar.gz")):
         with tarfile.open(archive, mode="r:*") as package:
             matches = [
                 item
