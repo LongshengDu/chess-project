@@ -1,44 +1,20 @@
+"""Backend configuration, read directly from the project's config.yaml."""
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WEB_DIST_DIR = PROJECT_ROOT / "web" / "dist"
+import yaml
 
-MAIA_ELO = 1500
-MAIA_MODEL_NAME = "maia3-5m"
-MAIA_CACHE_DIR = PROJECT_ROOT / "backend" / ".cache" / "maia3"
-MAIA_ENGINE_COMMAND = [
-    "maia3-uci",
-    "--model",
-    MAIA_MODEL_NAME,
-    "--cache-dir",
-    str(MAIA_CACHE_DIR),
-    "--local-files-only",
-    "--use-uci-history",
-    "--elo",
-    str(MAIA_ELO),
-    "--temperature",
-    "0.3",
-]
-MAIA_CACHE_COMMAND = [
-    "maia3-cache",
-    "--model",
-    MAIA_MODEL_NAME,
-    "--cache-dir",
-    str(MAIA_CACHE_DIR),
-]
+CONFIG_PATH = Path(__file__).resolve().parents[1] / 'config.yaml'
+CONFIG = yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8-sig'))
 
-TOP_HUMAN_MOVES = 10
-STOCKFISH_DEPTH = 12
-STOCKFISH_THREADS = 8
-STOCKFISH_HASH_MB = 512
-STOCKFISH_CACHE_DIR = PROJECT_ROOT / "backend" / ".cache" / "stockfish"
-STOCKFISH_RELEASE_API = (
-    "https://api.github.com/repos/official-stockfish/Stockfish/releases/latest"
-)
-STOCKFISH_ASSETS = {
-    ("windows", "x86-64"): "stockfish-windows-x86-64-universal.zip",
-    ("windows", "arm64"): "stockfish-windows-arm64-universal.zip",
-    ("linux", "x86-64"): "stockfish-linux-x86-64-universal.tar.gz",
-    ("darwin", "x86-64"): "stockfish-macos-universal.tar.gz",
-    ("darwin", "arm64"): "stockfish-macos-universal.tar.gz",
-}
+if not isinstance(CONFIG, dict) or set(CONFIG) != {'MAIA', 'STOCKFISH', 'ANALYSIS', 'COACH', 'SERVER', 'FRONTEND'}:
+    raise ValueError('config.yaml requires exactly six sections: MAIA, STOCKFISH, ANALYSIS, COACH, SERVER, FRONTEND.')
+if any(not isinstance(section, dict) for section in CONFIG.values()):
+    raise ValueError('Each config.yaml section must be a mapping.')
+
+for _path in (('SERVER', 'STORAGE', 'DATABASE'), ('SERVER', 'STORAGE', 'OUTPUT_DIR'), ('ANALYSIS', 'PROFILER_DIR'), ('ANALYSIS', 'CACHE_DIR'), ('FRONTEND', 'STATIC_DIR'), ('MAIA', 'CACHE_DIR')):
+    _section = CONFIG
+    for _name in _path[:-1]:
+        _section = _section[_name]
+    _key = _path[-1]
+    if _section[_key] is not None:
+        _section[_key] = (CONFIG_PATH.parent / Path(_section[_key]).expanduser()).resolve()

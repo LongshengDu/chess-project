@@ -1,0 +1,93 @@
+# Project configuration. Restart the application after editing.
+# Relative paths are resolved from this file. CLI options override YAML.
+# Application configuration has no environment-variable overrides.
+# All durations use seconds; search depths use plies (half-moves).
+# Cache capacities count entries/rows, not megabytes, unless marked MB.
+
+MAIA:
+  MODEL: maia3-79m
+  PLAYER_RATING: 1600
+  DEVICE: auto  # auto, cpu, cuda
+  CHECKPOINT: null  # Optional local checkpoint
+  CACHE_DIR: engine/.cache/maia3
+  CACHE_EXECUTABLE: maia3-cache
+  TEMPERATURE: 0.3  # Sampling in play mode
+  BATCH_SIZE: 128  # Position/rating rows per inference batch
+  POSITION_CACHE_ENTRIES: 512  # Prepared history tokens and legal masks
+  REQUEST_CACHE_ENTRIES: 128  # Completed interactive web inference requests
+
+STOCKFISH:
+  EXECUTABLE: null  # Auto-detect cached binary; or path/command
+  CACHE_DIR: engine/.cache/stockfish
+  START_TIMEOUT_SECONDS: 10
+  RELEASE_API: https://api.github.com/repos/official-stockfish/Stockfish/releases/latest
+  ASSETS:
+    windows:
+      x86-64: stockfish-windows-x86-64-universal.zip
+      arm64: stockfish-windows-arm64-universal.zip
+    linux:
+      x86-64: stockfish-linux-x86-64-universal.tar.gz
+    darwin:
+      x86-64: stockfish-macos-universal.tar.gz
+      arm64: stockfish-macos-arm64-universal.tar.gz
+
+ANALYSIS:
+  CACHE_DIR: analysis/.cache  # Shared web/CLI evidence; retain existing cache location
+  # Independent searches; each worker gets the configured thread count.
+  STOCKFISH_WORKERS: 4
+  STOCKFISH_THREADS_PER_WORKER: 4  # 4 workers x 4 threads = 16 search threads
+  STOCKFISH_HASH_MB_PER_WORKER: 256  # 4 workers x 256 MB = 1024 MB for the analysis pool
+  STOCKFISH_CACHE_ENTRIES: 512  # Completed native Stockfish position searches
+  # Candidate scheduling for root-move/full-game analysis: bounded, staged, exhaustive.
+  # Single evaluations and PV exploration always use their depth AND time limits.
+  STOCKFISH_SEARCH_STRATEGY: bounded
+  # Shared limits for full-game analysis, position/candidate scoring, and coach tools.
+  STOCKFISH_EVALUATION:
+    MAX_DEPTH: 28
+    DEFAULT_SEARCH_SECONDS: 10.0  # Per search, or shared across a position's bounded analysis phases
+    MAX_SEARCH_SECONDS: 30.0  # Largest requested search budget; not a whole-game timeout
+  # Fast principal-variation previews after a candidate move in the web analysis.
+  STOCKFISH_EXPLORATION:
+    MAX_DEPTH: 18
+    DEFAULT_SEARCH_SECONDS: 2.0  # Normal limit for ONE exploration search
+    MAX_SEARCH_SECONDS: 10.0  # Ceiling for a longer requested search
+  PLAYER_RATING:
+    METHOD: shared_curve_affine  # analysis/player_rating/<METHOD>.py; current-game evidence only; no population asset
+  PROFILER_DIR: null  # Optional browser profiler output directory
+
+COACH:
+  CODEX:
+    MODEL: gpt-6.1-sol
+    BINARY: null  # SDK's pinned runtime
+    REASONING_EFFORT: high
+  MAX_MODEL_RESPONSES: 24  # Chess-tool allowance defaults to four times this
+  # Fallback accounting when Codex does not report usage; this does not cap output length.
+  OUTPUT_TOKEN_ESTIMATE: 12800
+  TOTAL_TOKEN_BUDGET: 640000  # Cumulative input + output, including fallback estimates
+  RUN_TIMEOUT_SECONDS: 1200  # Entire coaching-agent run, after initial game analysis
+  REPORT_ATTEMPTS: 2  # Initial draft plus at most one correction
+  PROGRESS_INTERVAL_SECONDS: 15  # Console status while waiting for the agent
+  # Output defaults to <PGN parent>/output/<game name>-full. Override with --output-dir.
+
+SERVER:
+  HOST: 127.0.0.1
+  PORT: 5000
+  MAX_REQUEST_BODY_MB: 32
+  STORAGE:
+    DATABASE: backend/.cache/analysis.sqlite3
+    OUTPUT_DIR: backend/output  # Saved web-game artifacts; separate from engine caches
+    LOCK_TIMEOUT_SECONDS: 30  # Wait for a database write lock; not query runtime
+
+FRONTEND:
+  STATIC_DIR: web/dist
+  # Web analysis presets: depth -> multiplier for EVALUATION default AND maximum seconds.
+  # Coach analysis uses the unscaled EVALUATION limits.
+  STOCKFISH_TIME_SCALE_BY_DEPTH:
+    16: 0.2
+    18: 0.5
+    22: 1.0
+  BUILD:  # Python frontend build bootstrap
+    NODE_EXECUTABLE: null  # Optional path/command; otherwise discover Node
+    NODE_MIN_VERSION: 22
+    NODE_DIST_URL: https://nodejs.org/dist
+    TOOLS_DIR: web/.tools

@@ -1,0 +1,26 @@
+[Event "rated rapid game"]
+[Site "Chess.com"]
+[Link "https://lichess.org/CLYY0yS0"]
+[Date "2026.04.25"]
+[Round "-"]
+[White "Sattar53"]
+[Black "longsheng_du"]
+[Result "0-1"]
+[GameId "CLYY0yS0"]
+[UTCDate "2026.04.25"]
+[UTCTime "15:55:20"]
+[WhiteElo "1247"]
+[BlackElo "1261"]
+[WhiteEloEstimate "1400"]
+[BlackEloEstimate "1700"]
+[WhiteRatingDiff "-5"]
+[BlackRatingDiff "+5"]
+[Variant "Standard"]
+[TimeControl "600+5"]
+[ECO "D35"]
+[Opening "Queen's Gambit Declined: Normal Defense"]
+[Termination "Normal"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. e3 c5 5. Nf3 cxd4 6. Nxd4 Nc6 7. a3 Nxd4 8. Qxd4 b6 9. b4 Bb7 10. c5 bxc5 11. bxc5 Rc8 12. Bb5+ Bc6 13. a4 Bxb5 14. Nxb5 a6 15. Nd6+ Bxd6 16. cxd6 Qxd6 17. O-O O-O 18. Ba3 Qc6 19. Bxf8 Rxf8 20. Rfc1 Qd6 21. Qc5 Qe5 22. a5 Ng4 23. g3 Qe4 24. Ra4 Qxa4 25. Qd4 Qxd4 26. exd4 h5 27. h3 Nf6 28. Rc6 Ra8 29. Rb6 Ne4 30. Kg2 Nc3 31. Rc6 Ne2 32. g4 hxg4 33. hxg4 Nxd4 34. f3 Nxc6 0-1
+
+

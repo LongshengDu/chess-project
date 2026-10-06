@@ -1,0 +1,35 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.05.29"]
+[Round "-"]
+[White "Fardeen7_1589"]
+[Black "longsheng_du"]
+[Result "1-0"]
+[CurrentPosition "8/2q5/pp2pk1p/8/6N1/P1p3Q1/6PP/6K1 b - - 3 27"]
+[Timezone "UTC"]
+[ECO "B20"]
+[ECOUrl "https://www.chess.com/openings/Sicilian-Defense-Mengarini-Variation-2...e6-3.b4"]
+[UTCDate "2025.05.29"]
+[UTCTime "08:54:21"]
+[WhiteElo "1167"]
+[BlackElo "1152"]
+[WhiteEloEstimate "1900"]
+[BlackEloEstimate "1600"]
+[TimeControl "900+10"]
+[Termination "Fardeen7_1589 won by resignation"]
+[StartTime "08:54:21"]
+[EndDate "2025.05.29"]
+[EndTime "09:16:31"]
+[Link "https://www.chess.com/analysis/game/live/138983580114/review?move=0"]
+[WhiteUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[WhiteCountry "69"]
+[WhiteTitle ""]
+[BlackUrl "https://images.chesscomfiles.com/uploads/v1/user/83324978.f206a0c5.50x50o.06d5ee419b62.jpeg"]
+[BlackCountry "2"]
+[BlackTitle ""]
+
+1. e4 c5 2. a3 e6 3. b4 b6 4. c3 Nc6 5. Nf3 Nf6 6. e5 Nd5 7. Bc4 d6 8. d4 dxe5
+9. dxe5 Qc7 10. O-O a6 11. Bxd5 exd5 12. Qxd5 Be6 13. Qe4 Be7 14. Ng5 Bxg5 15.
+Bxg5 O-O 16. f4 h6 17. Bxh6 gxh6 18. f5 Nxe5 19. fxe6 fxe6 20. Nd2 Rxf1+ 21.
+Rxf1 Rf8 22. Rxf8+ Kxf8 23. Qf4+ Kg7 24. Nc4 cxb4 25. Nxe5 bxc3 26. Qg3+ Kf6 27.
+Ng4+ 1-0

@@ -1,107 +1,47 @@
 from __future__ import annotations
 
-import subprocess
+import argparse
 from pathlib import Path
 
-import chess.engine
-from flask import Flask, request
+from flask import Flask
 
-if __package__:
-    from .analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
-    from .assets import MAIA_MODEL_SPEC, ensure_runtime_assets
-    from .game import ChessApi
-    from .settings import (
-        MAIA_CACHE_DIR,
-        MAIA_ELO,
-        MAIA_ENGINE_COMMAND,
-        MAIA_MODEL_NAME,
-        WEB_DIST_DIR,
-    )
-else:  # Support: python backend/app.py
-    from analysis import MaiaPolicy, PgnAnalysisApi, StockfishScorer
-    from assets import MAIA_MODEL_SPEC, ensure_runtime_assets
-    from game import ChessApi
-    from settings import (
-        MAIA_CACHE_DIR,
-        MAIA_ELO,
-        MAIA_ENGINE_COMMAND,
-        MAIA_MODEL_NAME,
-        WEB_DIST_DIR,
-    )
+# Keep both `python backend/app.py` and `python -m backend.app` working.
+if not __package__:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-
-def _request_data() -> dict:
-    data = request.get_json(silent=True)
-    return data if isinstance(data, dict) else {}
-
-
-def _analysis_path(data: dict) -> tuple[int, list[str]]:
-    try:
-        ply = int(data.get("ply", -1))
-    except (TypeError, ValueError) as error:
-        raise ValueError("Invalid PGN position") from error
-
-    moves = data.get("moves", [])
-    if not isinstance(moves, list):
-        raise TypeError("Invalid variation path")
-    return ply, [str(move) for move in moves]
+from engine.maia import MaiaPolicy
+from engine.stockfish import StockfishScorer
+from engine.assets import ensure_runtime_assets
+from backend.settings import CONFIG
+from backend.analysis_positions import PlatformAnalysis
+from backend.routes_analysis import AnalysisRoutes
+from backend.routes_play import PlayRoutes
+from backend.routes_profiler import ProfilerRoutes
+from analysis.profiler.runtime import RuntimeProfiler
 
 
 def create_app(
-    game: ChessApi,
-    pgn_analysis: PgnAnalysisApi,
-    static_folder: Path = WEB_DIST_DIR,
+    platform: PlatformAnalysis,
+    static_folder: Path | None = None,
 ) -> Flask:
+    if static_folder is None:
+        static_folder = CONFIG['FRONTEND']['STATIC_DIR']
     server = Flask(__name__, static_folder=str(static_folder), static_url_path="")
+    server.config["MAX_CONTENT_LENGTH"] = CONFIG['SERVER']['MAX_REQUEST_BODY_MB'] * 1024 * 1024
+    server.json.sort_keys = False
+    AnalysisRoutes(platform).register(server)
+    PlayRoutes(platform.play).register(server)
+    if platform.profiler:
+        ProfilerRoutes(platform).register(server)
 
     @server.get("/")
-    def index():
+    @server.get("/analysis")
+    @server.get("/analysis/<path:route>")
+    @server.get("/play")
+    @server.get("/play/maia")
+    def index(route=None):
         return server.send_static_file("index.html")
-
-    @server.get("/api/state")
-    def state():
-        return game.state()
-
-    @server.post("/api/move")
-    def move():
-        return game.move(str(_request_data().get("uci", "")))
-
-    @server.post("/api/reply")
-    def reply():
-        return game.reply()
-
-    @server.post("/api/action")
-    def action():
-        return game.action(str(_request_data().get("name", "")))
-
-    @server.post("/api/new-game")
-    def new_game():
-        data = _request_data()
-        fen = data.get("fen")
-        return game.new_game(
-            str(data.get("color", "white")),
-            None if fen is None else str(fen),
-        )
-
-    @server.post("/api/analysis/pgn")
-    def import_pgn():
-        return pgn_analysis.import_pgn(str(_request_data().get("pgn", "")))
-
-    @server.post("/api/analysis/position")
-    def analyse_position():
-        data = _request_data()
-        ply, variation_moves = _analysis_path(data)
-        return pgn_analysis.analyse_position(ply, variation_moves)
-
-    @server.post("/api/analysis/move")
-    def analysis_move():
-        data = _request_data()
-        ply, variation_moves = _analysis_path(data)
-        return pgn_analysis.play_variation_move(
-            ply,
-            variation_moves,
-            str(data.get("uci", "")),
-        )
 
     @server.errorhandler(TypeError)
     @server.errorhandler(ValueError)
@@ -111,45 +51,48 @@ def create_app(
     return server
 
 
-def _popen_options() -> dict:
-    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    return {}
-
-
-def main() -> None:
-    if not (WEB_DIST_DIR / "index.html").exists():
-        raise SystemExit("Frontend not built. Run: uv run web/build.py")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run local Maia play and game analysis")
+    parser.add_argument("--host", default=CONFIG['SERVER']['HOST'])
+    parser.add_argument("--port", type=int, default=CONFIG['SERVER']['PORT'])
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default=CONFIG['MAIA']['DEVICE'],
+                        help="Maia inference device (auto uses CUDA when available)")
+    parser.add_argument("--stockfish-threads-per-worker", type=int,
+                        default=CONFIG['ANALYSIS']['STOCKFISH_THREADS_PER_WORKER'],
+                        help="CPU search threads for each independent Stockfish worker")
+    parser.add_argument("--analysis-strategy", choices=("bounded", "staged", "exhaustive"), default=CONFIG['ANALYSIS']['STOCKFISH_SEARCH_STRATEGY'],
+                        help="Analysis search: depth/time budgets (default), uncapped staged, or exhaustive")
+    parser.add_argument("--profiler-dir", type=Path, default=CONFIG['ANALYSIS']['PROFILER_DIR'], help="Record opt-in runtime timing reports in this directory")
+    parser.add_argument("--analysis-database", type=Path, default=CONFIG['SERVER']['STORAGE']['DATABASE'], help="Use a separate saved-study database")
+    args = parser.parse_args(argv)
+    if not 1 <= args.stockfish_threads_per_worker <= 256:
+        parser.error("--stockfish-threads-per-worker must be between 1 and 256")
+    static_folder = CONFIG['FRONTEND']['STATIC_DIR']
+    if not (static_folder / "index.html").exists():
+        raise SystemExit("Frontend not built. Run: uv run python web/build.py")
 
     stockfish_path = ensure_runtime_assets()
-    game: ChessApi | None = None
-    pgn_analysis: PgnAnalysisApi | None = None
+    stockfish: StockfishScorer | None = None
     try:
-        maia_engine = chess.engine.SimpleEngine.popen_uci(
-            MAIA_ENGINE_COMMAND,
-            **_popen_options(),
-        )
-        game = ChessApi(
-            maia_engine,
-            model_name=MAIA_MODEL_SPEC.display_name,
-            model_elo=MAIA_ELO,
-        )
-        pgn_analysis = PgnAnalysisApi(
-            MaiaPolicy(MAIA_MODEL_NAME, MAIA_CACHE_DIR),
-            StockfishScorer(stockfish_path),
-        )
-        create_app(game, pgn_analysis).run(
-            host="127.0.0.1",
-            port=5000,
-            threaded=False,
+        maia = MaiaPolicy(CONFIG['MAIA']['MODEL'], CONFIG['MAIA']['CACHE_DIR'], device=args.device)
+        stockfish = StockfishScorer(stockfish_path, threads_per_worker=args.stockfish_threads_per_worker)
+        platform = PlatformAnalysis(maia, stockfish, args.analysis_database,
+                                    strategy=args.analysis_strategy,
+                                    profiler=RuntimeProfiler(args.profiler_dir) if args.profiler_dir else None)
+        pool = stockfish.analysis_pool
+        print(f"Maia device: {maia._engine.cfg.device}; Stockfish: {pool.workers} workers x "
+              f"{pool.threads_per_worker} threads per worker ({pool.total_threads} total search threads); "
+              f"search: {args.analysis_strategy}", flush=True)
+        if maia._engine.cfg.device == "cpu":
+            print("For an NVIDIA GPU, launch with: uv run --extra cuda python backend/app.py", flush=True)
+        create_app(platform, static_folder).run(
+            host=args.host,
+            port=args.port,
+            threaded=True,
         )
     finally:
-        try:
-            if pgn_analysis is not None:
-                pgn_analysis.close()
-        finally:
-            if game is not None:
-                game.close()
+        if stockfish is not None:
+            stockfish.close()
 
 
 if __name__ == "__main__":

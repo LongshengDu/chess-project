@@ -1,0 +1,40 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.09.20"]
+[Round "-"]
+[White "Samuel_Vergara"]
+[Black "carlosmiguelbeltran"]
+[Result "1-0"]
+[CurrentPosition "Q7/3P4/2n4p/2P5/7k/4K3/4B3/8 b - - 0 54"]
+[Timezone "UTC"]
+[ECO "C20"]
+[ECOUrl "https://www.chess.com/openings/Bishops-Opening-Boi-Variation"]
+[UTCDate "2026.09.20"]
+[UTCTime "22:55:58"]
+[WhiteElo "1378"]
+[BlackElo "1345"]
+[WhiteEloEstimate "1200"]
+[BlackEloEstimate "850"]
+[TimeControl "900+10"]
+[Termination "Samuel_Vergara won by resignation"]
+[StartTime "22:55:58"]
+[EndDate "2026.09.20"]
+[EndTime "23:10:56"]
+[Link "https://www.chess.com/analysis/game/live/184130887258/analysis"]
+[WhiteUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[WhiteCountry "32"]
+[WhiteTitle ""]
+[BlackUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[BlackCountry "163"]
+[BlackTitle ""]
+
+1. e4 e5 2. Bc4 Bc5 3. d3 Qf6 4. Nf3 h6 5. O-O Ne7 6. Nc3 O-O 7. Qe2 a6 8. Be3
+Bb6 $6 9. Nd5 $6 Nxd5 $1 10. Bxd5 Bxe3 $2 11. Qxe3 $9 c6 12. Bb3 Re8 $2 13. a3 $9 d6 14.
+Rac1 Nd7 15. c4 Nc5 16. Ba2 Bg4 17. b4 Nd7 18. h3 $2 Bxf3 $1 19. Qxf3 Qxf3 20. gxf3
+Re6 $6 21. Kh2 $6 Rf6 22. Rg1 $6 Rxf3 23. Rg2 Rxd3 24. Rcg1 g6 25. c5 Rf8 $4 26.
+Rxg6+ Kh7 $1 27. Rg7+ Kh8 28. Bxf7 Nf6 $2 29. Bc4 $9 Rd4 30. Be6 Nxe4 31. R1g6 $4
+Rxf2+ 32. Rg2 Rxg2+ $1 33. Rxg2 Ng5 $9 34. Bc8 Rd3 $6 35. Bxb7 $4 Rxh3+ $9 36. Kg1
+e4 $4 37. cxd6 Rc3 38. d7 Ne6 $4 39. Bxa6 e3 $6 40. Bc8 $4 Nd8 $9 41. Ba6 $2 Kh7 $6 42.
+Kf1 $2 Rc1+ $9 43. Ke2 Rc2+ 44. Kf3 Rxg2 45. Kxg2 Kg6 46. Kf3 $2 Kg5 $4 47. Kxe3 Kg4 $6
+48. Be2+ $6 Kg3 $2 49. a4 Ne6 50. a5 c5 51. bxc5 Nd8 52. a6 Kh4 53. a7 Nc6 54. a8=Q
+1-0

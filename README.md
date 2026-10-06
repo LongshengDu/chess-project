@@ -1,161 +1,216 @@
-# Maia Local Web Chess
+# Maia Local Chess
 
-A small local web chess game with a Lichess-inspired play layout. You play
-White or Black against the Maia3 model selected by `MAIA_MODEL_NAME` in
-`backend/settings.py` at Elo 1500. A small Snabbdom controller and Lichess
-round-style views render the interface around Chessground, while `python-chess`
-owns the game state, notation, and rules.
-
-## Repository layout
-
-```text
-backend/app.py         Flask routes and process lifecycle
-backend/assets.py      verified Maia and Stockfish cache management
-backend/game.py        live game rules and response state
-backend/analysis.py    PGN parsing, Maia policy, and Stockfish scoring
-backend/settings.py    paths and engine configuration
-backend/chess_utils.py shared chess-state helpers
-pyproject.toml         Python/uv project configuration
-uv.lock                Locked Python dependencies
-web/                   Frontend source and all pnpm/TypeScript configuration
-deps/lichess-lila/     pinned Lichess source submodule (UI reference/assets)
-deps/maia/             pinned Maia3 source submodule
-backend/.cache/        downloaded Maia3 checkpoint and Stockfish executable
-```
-
-The notebook experiments and their supporting files also remain at the root.
+A local chess application with Maia play, full-game analysis and a separate
+Codex coaching CLI. The sole frontend imports the pinned Maia platform pages and
+runs against local Python engines. **Analysis** is the landing page;
+**Play Maia** opens game setup.
 
 ## Install and run
 
-Requirements: Python 3.10+, Git, `uv`, an internet connection for initial setup,
-and a web browser. From the repository root in PowerShell:
+Requirements: Python 3.10+, Git, uv and a browser. Initial setup downloads
+dependencies and engine assets. Run from the repository root:
 
 ```powershell
 git submodule update --init --depth 1
 uv sync
-uv run python -m backend.assets
-uv run python ./web/build.py
-uv run python ./backend/app.py
+uv run python -m engine.assets
+uv run python web/build.py
+uv run python backend/app.py
 ```
 
-Open <http://127.0.0.1:5000>. Stop the server with `Ctrl+C`.
+Python dependencies for the entire application, including coaching, are declared
+in root [pyproject.toml](pyproject.toml) and resolved in [uv.lock](uv.lock).
+Components share the root `.venv`; there are no component-specific Python
+requirements or installation steps.
 
-The cache command resolves `MAIA_MODEL_NAME` through Maia3's model registry and
-downloads the selected checkpoint into the project-local ignored
-`backend/.cache/maia3` directory. It also selects the matching official Windows,
-Linux, or macOS binary from the latest Stockfish GitHub release, verifies
-GitHub's SHA-256 digest, and extracts it into `backend/.cache/stockfish`. Server
-startup ensures both caches exist before launching Maia; the Maia UCI process
-runs in local-files-only mode so model downloads cannot consume its
-initialization timeout. After the initial setup, rebuild the frontend only when
-`web/` changes; the normal run command is:
+The root dependencies also retain Stockfish's Python wrapper and notebook
+support for the preserved experiments. Application engine operations use
+`python-chess` directly. Historical serial timing charts require the optional
+`profiling` extra (`uv sync --extra profiling`, adding `--extra cuda` for GPU
+installations); current full-game timing charts use built-in SVG generation.
+
+Open <http://127.0.0.1:5000>. Stop the application and its engines with **Ctrl+C**.
+After setup, normal startup only needs `uv run python backend/app.py`. Rebuild
+the frontend after changing its source.
+
+For NVIDIA GPU inference, install and retain the CUDA extra:
 
 ```powershell
-uv run python .\backend\app.py
+uv sync --extra cuda
+uv run --extra cuda python web/build.py
+uv run --extra cuda python backend/app.py --device cuda
 ```
 
-## Architecture
+Include `--extra cuda` on subsequent uv runs to retain that PyTorch installation.
+Maia can use the GPU; Stockfish uses CPU workers. The startup message reports the
+selected device and worker configuration. The build helper uses existing Node.js
+22+ or downloads verified tools into `web/.tools`; no global pnpm is required.
+
+## Applications
+
+**Web play and analysis.** Choose **Select Game → Custom → Analyze Custom PGN/FEN**
+to import standard-chess PGN or a six-field FEN. The upstream page provides the
+board, moves, analysis, moves by rating, options, export and learning from mistakes.
+**Analyze Entire Game** runs the same Python pipeline as the coach: Maia policies,
+Stockfish searches, move hints, Lichess accuracy and played-strength fitting for
+both players. The complete result is saved, including ratings that the current
+page does not yet display. Coaching report generation remains a separate action
+in the CLI.
+
+**Play Maia** provides side/rating/time-control choices, custom starting positions,
+clocks, premoves, promotion, resignation and rematches. It uses the configured
+local model. Saved games can open directly in analysis. Local play has no account
+rating system.
+
+**Coaching CLI.** The separate [coach](coach/README.md) prepares local evidence,
+estimates played strength and uses Codex with the user's ChatGPT sign-in to write
+a report. Begin with local analysis:
+
+```powershell
+python coach/coach.py games/game1.pgn --side white --elo 1600 --analysis-only
+```
+
+See the coach guide for installation, full-report commands, saved-analysis reuse,
+tools and budgets. Output defaults to `<PGN parent>/output/<PGN stem>-full`;
+`--output-dir` overrides it. Reusable caches remain separate from game output.
+
+## Components and documentation
+
+Each runtime component directory has one Markdown guide, named `README.md`.
+Test documentation is consolidated in `tests/README.md`; directories under
+`tests/` do not contain their own READMEs or individual test inventories.
+The root guide covers setup and cross-component conventions; detailed contracts
+belong to their component. Standalone technical papers remain in `docs/`.
+Runtime prompts use `.txt` resources. Dependency documentation, game reports,
+saved benchmark output and user experiments retain their original files.
+
+Project-wide Python dependency declarations, lockfiles and tooling configuration
+belong at the repository root. Dependency-owned manifests stay inside `deps/`.
+
+| Component | Responsibility and guide |
+| --- | --- |
+| [backend](backend/README.md) | Flask application, local API, persistence, request validation and lifecycle |
+| [engine](engine/README.md) | Maia inference, Stockfish workers, UCI processes and engine assets |
+| [analysis](analysis/README.md) | Shared game evidence, search, accuracy, hints, player ratings and profiling |
+| [coach](coach/README.md) | Codex investigations, evidence selection, coaching policy and report generation |
+| [web](web/README.md) | Upstream frontend integration, local adapters, build tools and performance |
+| [tests](tests/README.md) | Component regression suites, fixtures, development checks and preserved experiments |
+
+Dependency sources are pinned submodules under `deps/`: Maia, the Maia platform
+frontend and Lichess Lila. Update revisions deliberately and check
+the compatibility transforms when updating the frontend.
+
+The default **shared-curve affine method** uses only the current game's Maia policies, move qualities and supplied account ratings. It converts arithmetic accuracy through that game's shared curve under a common account-centered prior; no population asset or other game's evidence enters the fit. The [shared-curve affine paper](docs/shared_curve_affine.md) derives the method; the [analysis guide](analysis/README.md#configuration-and-ratings) covers configuration and the retained [Bayesian shared-curve method](docs/bayesian_shared_curve.md). The [rating extension contract](analysis/README.md#player-rating-estimator-interface) describes filename-selected methods.
+
+**Benchmark games are evaluation-only.** Their positions, policies, quality distributions, observed accuracies and reference ratings must not supply training, calibration, priors or population assets for another game's estimator, even without labels or with target-game exclusion. The population-based `hierarchical_affine` and `uncertainty_ensemble` implementations and papers have been removed; `shared_curve_affine` is the current-game-only replacement. `arithmetic_coverage` remains disabled. Affected historical test comparisons remain withdrawn and do not establish test-only performance or justify promotion.
+
+## Configuration
+
+Edit [config.yaml](config.yaml), then restart the application. Relative configured
+paths resolve from the project root. Explicit CLI options take precedence;
+application settings do not use environment-variable overrides.
+
+| Root section | Ownership |
+| --- | --- |
+| `MAIA` | Model, checkpoint, device, batch size, playing rating, sampling and inference caches |
+| `STOCKFISH` | Executable, binary cache, startup and asset downloads |
+| `ANALYSIS` | Shared evidence cache, search strategy/time/depth, Stockfish workers/threads/hash, exploration and rating method |
+| `COACH` | Codex model, response/token/time budgets and progress |
+| `SERVER` | Host, port, request limit and database |
+| `FRONTEND` | Web analysis preset scales, static build location, and Node/build-tool settings |
+
+Every YAML duration is in **seconds**; search depth is in **plies**. Stockfish
+time and depth are stopping limits, not a total game timeout.
+`STOCKFISH_THREADS_PER_WORKER` applies to each independent worker;
+`STOCKFISH_HASH_MB_PER_WORKER` applies to each worker, so pool hash memory is
+worker count multiplied by this value (4 × 128 MB = 512 MB by default).
+`MAIA.PLAYER_RATING` configures play, whereas `ANALYSIS.PLAYER_RATING` selects
+the estimation method. Method-specific numerical settings remain in the selected Python module; the default returns points without an interval.
+
+`ANALYSIS.STOCKFISH_EVALUATION` supplies common scoring and full-game limits.
+`FRONTEND.STOCKFISH_TIME_SCALE_BY_DEPTH` scales both default and maximum seconds
+for web presets (12: 0.2, 15: 0.5, 18: 1.0); coach analysis uses unscaled limits.
+`STOCKFISH_SEARCH_STRATEGY` selects candidate scheduling shared by web and coach.
+Single evaluations and continuation previews always use depth/time bounds.
+
+Each component's `settings.py` reads YAML directly and resolves the paths it
+uses. Build tooling reads YAML directly as well. There is no global configuration
+loader and no dependency on `engine/settings.py` for another component's settings.
+Coach reuses the shared analysis/engine sections. Test-only settings stay in
+`tests/coach/config.yaml`; dependency and framework manifests retain their native
+formats.
+
+## Architecture and stored data
 
 ```text
-Snabbdom round view + tiny LocalRoundController
-    |                        |
-    |                        +--> Chessground (display and input only)
-    | local JSON routes
-    v
-Flask + ChessApi + python-chess (position, legality, outcome, history)
-    | python-chess UCI support
-    v
-Maia3 (one persistent process)
+web: upstream Maia pages + local adapters
+                    |
+           /api/platform/*
+                    |
+backend: validation, saved games, streaming
+                    |
+           analysis + engine
+       Maia policies / Stockfish workers
+
+web Analyze Entire Game -> shared GameAnalyzer -> saved analysis + player ratings
+coach CLI              -> shared GameAnalyzer -> Codex tools -> coaching report
 ```
 
-The controller sends a UCI move such as `e2e4` to `POST /api/move`. Python
-validates and pushes it, then immediately returns a complete display state and
-the authoritative move sound. The controller renders and plays that sound before
-calling `POST /api/reply`; Python asks Maia for a `nodes=1` move and returns its
-new state and sound separately. The controller converts the returned
-destination object to Chessground's required `Map`; it does not calculate
-moves. Promotion choices are also supplied by Python. Stopping the server runs
-a `finally` block that sends the engine its UCI quit command.
+The web server uses one configured Maia adapter for play and analysis. Each
+launched application owns its engines and closes them on exit; sharing code and
+disk caches does not share running processes. Source details and route contracts
+are in the component guides.
 
-The frontend follows Lila's controller → view → Snabbdom patch loop. It imports
-Lila's VNode helpers, wheel replay, pointer/hold handling, promotion controller,
-captured-material renderer, and analysis-node completion directly from the
-pinned source tree. Chessground is mounted from a Snabbdom insertion hook and
-remains stable across redraws. Site-wide Lila sockets, accounts, translations,
-chat, tournaments, and clocks are not loaded.
+| Default location | Contents |
+| --- | --- |
+| `engine/.cache/maia3` | Downloaded Maia checkpoints |
+| `engine/.cache/stockfish` | Verified Stockfish binary |
+| `backend/.cache/analysis.sqlite3` | Imported studies, played games, favorites and cached web analysis |
+| `coach/.cache` | Shared web/CLI evidence; configured by `ANALYSIS.CACHE_DIR`, retaining the existing location |
+| `<PGN parent>/output/<PGN stem>-full` | Per-game analysis and coaching output |
+| `web/dist` | Generated frontend served by Flask |
 
-Python returns a display snapshot for every ply, including the authoritative
-board FEN and relative captured-material metadata. Lila's material view renders
-the FEN directly, while the local metadata retains the existing accessible
-description. The move sheet, navigation buttons, mouse wheel, and Lichess
-keyboard shortcuts use those snapshots to replay the game without moving game
-authority out of Python. Chessground provides right-drag arrows and circles,
-and Lila's promotion controller supplies the in-board
-queen/knight/rook/bishop chooser.
-
-The controls provide local takeback, draw claim, resign confirmation, and a
-Lila-style New Game setup dialog. New games can use the standard initial board
-or a valid FEN position, with the human playing either White or Black. Maia
-moves automatically whenever the selected position has Maia to move, and the
-board defaults to the human's orientation. Automatic draws and claimable
-threefold/fifty-move draws follow
-`python-chess`. Board-menu preferences cover flip, zen, blindfold, coordinates,
-sound, PGN copy, and help. Move, capture, check, and checkmate audio comes from
-the pinned Lichess source in `deps/lichess-lila`. Like Lila's round controller,
-the human and remote move sounds are distinct events rather than a delayed pair.
-
-## PGN analysis
-
-Choose **Analyse PGN**, paste one game's Portable Game Notation, and select a
-move in the move sheet. The board shows the position before that move. The configured Maia3 model
-returns the exact legal-move policy conditioned on 1500 Elo for both players;
-the panel displays the ten most likely human moves, the imported PGN move when
-it falls outside that top ten, and the probability mass of the remaining legal
-moves. The percentages therefore always total 100%.
-
-The analysis surface is a focused Lila-compatible adapter rather than a
-separate card UI: it uses the upstream `analyse__tools` ordering,
-`analyse__moves` replay, ceval engine header, explorer `table.moves` structure,
-evaluation formatting, loading treatment, and explorer-row hover arrows on
-Chessground. Its nodes use Lila's direct standard-node completion and canonical
-two-character IDs. The table remains local because Maia probabilities and the
-Python Stockfish response are intentionally different from Lila's explorer and
-browser-ceval controller contracts. Source mappings are recorded in
-`web/lila/README.md`.
-
-Stockfish evaluates the currently displayed position before the next move, then
-searches the displayed Maia candidates and the played PGN move in a depth-12
-MultiPV search. Evaluations always use White's point of view: positive means
-White is better and negative means Black is better. Maia is loaded lazily
-from `backend/.cache/maia3`, and the platform-specific
-engine in `backend/.cache/stockfish` starts only when analysis is first
-requested. Completed Maia and Stockfish results are cached by analysis-tree
-path, so revisiting a move does not run the engines again; importing a new PGN
-clears the cache. Imported analysis is separate from the live game state.
-
-Click any Maia candidate to follow it. If it is not the imported continuation,
-it is added as a Lila-style variation; click any move in the analysis tree to
-jump between the PGN and its branches. You can also move either color directly
-on Chessground to extend the selected line. Python reconstructs the branch from
-its imported ply, validates every move and promotion, and supplies the next
-position's legal destinations before Maia and Stockfish run again.
-
-See [LICHESS_UI_AUDIT.md](LICHESS_UI_AUDIT.md) for the source-by-source feature
-comparison. Lichess's round and bot-play controllers are intentionally not
-imported: the former requires Lichess server state, and the latter makes
-chessops own local game rules. Both conflict with this app's authoritative
-Flask/python-chess/Maia/Stockfish design. Separable leaf behavior is imported
-directly; only the API-specific orchestration and views remain local.
+Saved studies and caches use separate configuration entries. Choosing a profiling
+or report destination does not redirect the default cache.
 
 ## Development
 
-Run `uv run web/build.py` from the repository root after editing the frontend.
-The script uses an existing Node.js 22+ installation when available. Otherwise,
-it downloads and verifies an official project-local Node.js build, then
-bootstraps the pinned pnpm version and any missing frontend packages. Global
-Node.js and pnpm installations are not required.
-The generated `web/dist/` directory contains no hand-written application logic. Python and uv
-configuration remains at the repository root, while all Node, pnpm, Vite, and
-TypeScript configuration lives under `web/`. Dependency sources remain separate
-under `deps/`; update their pinned revisions deliberately and repeat the UI audit
-when refreshing Lichess.
+Keep each Python module focused on one responsibility. Stateful services own
+their resources and lifecycle; pure chess calculations remain small functions.
+Use direct imports from the owning module, explicit dependencies and composition
+instead of compatibility reexports or application-specific branches in shared
+analysis. HTTP controllers, storage, engine operations, analysis and report
+rendering have separate modules within their existing components.
+
+Name related Python modules with a shared group first and a descriptive role
+second: `assets_maia.py` and `assets_stockfish.py`, `routes_analysis.py` and
+`routes_play.py`, or `agent_runner.py` and `agent_budget.py`. Analysis follows
+the same convention with `game_*`, `position_*`, `stockfish_*` and `profiler_*`.
+Rating modules live together under `analysis/player_rating/` with short role
+names such as `interface.py`, `service.py` and `evidence.py`; their documentation
+stays in `analysis/README.md`. Keep clear standalone names such as `app.py`,
+`settings.py`, `cache.py`, `maia.py` and `stockfish.py`; do not add a prefix
+just to repeat the component directory. Each runtime component README must give
+every Python module except `__init__.py` its own table row and responsibility.
+Do not combine several Python filenames in one row. Test documentation covers
+suites and how to run them in `tests/README.md`, without individual test-file
+descriptions. Test filenames follow the module or behavior they cover.
+
+From the project root:
+
+```powershell
+python -m unittest discover -s tests -t . -p "test_*.py"
+node --test tests/web/*.test.mjs
+```
+
+Use the project's Python environment; frontend tests need dependencies installed
+by `web/build.py`. See [tests](tests/README.md) for component commands,
+[web development](web/README.md#development-and-validation) for frontend checks, and
+[performance](web/README.md#performance) for measurements and reproduction.
+
+Keep tests in `tests/<component>/`. Preserve user scratch code, notebooks, chess
+SVGs and historical results; `tests/main.py`, `tests/notebook.ipynb` and
+`tests/chess.svg` are intentional user work. Validate agent changes offline first,
+then at most a small live report when needed. Full live coaching reports require
+an explicit request during development. Close engines and owned processes after
+checks, and leave server startup to the user.

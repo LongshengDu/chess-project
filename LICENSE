@@ -21,6 +21,7 @@ terms:
 
 - Lila: deps/lichess-lila/COPYING.md and deps/lichess-lila/LICENSE
 - Maia3: deps/maia/LICENSE
+- Maia platform frontend (demo components and assets): deps/maia-platform-frontend/LICENSE (GPL-3.0)
 - Other dependencies and third-party materials: the notices accompanying
   those files or packages
 

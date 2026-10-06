@@ -1,0 +1,37 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.05.30"]
+[Round "-"]
+[White "Nexusyami"]
+[Black "longsheng_du"]
+[Result "0-1"]
+[CurrentPosition "8/4k1pp/4P3/p3K3/6r1/8/7P/8 w - - 0 46"]
+[Timezone "UTC"]
+[ECO "B22"]
+[ECOUrl "https://www.chess.com/openings/Alapin-Sicilian-Defense-Sherzer-Variation"]
+[UTCDate "2025.05.30"]
+[UTCTime "12:35:15"]
+[WhiteElo "1164"]
+[BlackElo "1170"]
+[WhiteEloEstimate "900"]
+[BlackEloEstimate "1300"]
+[TimeControl "900+10"]
+[Termination "longsheng_du won by resignation"]
+[StartTime "12:35:15"]
+[EndDate "2025.05.30"]
+[EndTime "12:53:51"]
+[Link "https://www.chess.com/analysis/game/live/139026099716/review?move=0"]
+[WhiteUrl "https://images.chesscomfiles.com/uploads/v1/user/161634163.19e33bb6.50x50o.2a93f9a5ce02.jpg"]
+[WhiteCountry "76"]
+[WhiteTitle ""]
+[BlackUrl "https://images.chesscomfiles.com/uploads/v1/user/83324978.f206a0c5.50x50o.06d5ee419b62.jpeg"]
+[BlackCountry "2"]
+[BlackTitle ""]
+
+1. e4 c5 2. c3 Nf6 3. e5 Nd5 4. d4 e6 5. Nf3 Nc6 6. Bc4 a6 7. O-O b5 8. Bxd5
+exd5 9. Bf4 cxd4 10. cxd4 Be7 11. Nc3 O-O 12. Nxd5 Bb7 13. Nxe7+ Nxe7 14. Qd3
+Rc8 15. Rab1 Ng6 16. Bg5 Qb6 17. b3 d6 18. Rfe1 dxe5 19. Nxe5 Nxe5 20. Rxe5 f6
+21. Bxf6 Rxf6 22. Rbe1 Qc6 23. f3 Rff8 24. Re6 Qc7 25. Re7 Qb8 26. a4 bxa4 27.
+bxa4 Rce8 28. Rxe8 Rxe8 29. Qc4+ Kh8 30. Rb1 Rc8 31. Qf7 Rc7 32. Rxb7 Rxb7 33.
+Qe6 a5 34. d5 Qd8 35. d6 Rd7 36. f4 Rxd6 37. Qe5 Rd1+ 38. Kf2 Qd4+ 39. Kg3 Qxe5
+40. fxe5 Kg8 41. Kf4 Kf7 42. Kf5 Ra1 43. e6+ Ke7 44. Ke5 Rxa4 45. g4 Rxg4 0-1

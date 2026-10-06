@@ -1,0 +1,7 @@
+# Test-only controls. Production code never loads this file.
+TOKEN_BUDGET: 20000
+TIMEOUT: 90
+TOOL_CALLS: 3
+MAX_WORDS: 250
+MAX_OUTPUT_TOKENS: 700
+OUTPUT_DIR: output

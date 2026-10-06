@@ -1,0 +1,40 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.10.04"]
+[Round "-"]
+[White "EugeneMukhin"]
+[Black "chessfuryHxc4"]
+[Result "1/2-1/2"]
+[CurrentPosition "8/k1K5/8/8/8/8/8/8 w - - 0 59"]
+[Timezone "UTC"]
+[ECO "D30"]
+[ECOUrl "https://www.chess.com/openings/Queens-Gambit-Declined-Traditional-Variation-4...Be7"]
+[UTCDate "2026.10.04"]
+[UTCTime "16:41:25"]
+[WhiteElo "1432"]
+[BlackElo "1475"]
+[WhiteEloEstimate "1850"]
+[BlackEloEstimate "1850"]
+[TimeControl "900+10"]
+[Termination "Game drawn by insufficient material"]
+[StartTime "16:41:25"]
+[EndDate "2026.10.04"]
+[EndTime "17:03:37"]
+[Link "https://www.chess.com/analysis/game/live/184813165072/analysis?move=0"]
+[WhiteUrl "https://images.chesscomfiles.com/uploads/v1/user/101811504.46fcad27.50x50o.abc8a1590bd1.jpg"]
+[WhiteCountry "3"]
+[WhiteTitle ""]
+[BlackUrl "https://images.chesscomfiles.com/uploads/v1/user/19082492.bb9cde74.50x50o.5e532d3ec8cf.jpeg"]
+[BlackCountry "112"]
+[BlackTitle ""]
+
+1. d4 d5 2. c4 e6 3. Nf3 Nf6 4. Bg5 Be7 5. Qc2 Ne4 $6 6. Bxe7 Qxe7 7. e3 Nc6 8.
+c5 $6 O-O 9. a3 f6 $6 10. Bd3 f5 11. h4 $6 e5 12. O-O exd4 13. exd4 Qf6 14. Nc3
+Nxd4 $2 15. Nxd4 Qxd4 16. Rad1 $2 Qf6 $4 17. Nxd5 Qxh4 18. Nxc7 Rb8 19. Qc4+ $6 Kh8
+20. f3 $2 Qe7 $2 21. Nd5 $9 Qxc5+ $1 22. Qxc5 Nxc5 23. f4 $6 Nxd3 24. Rxd3 b6 25. Ne7 $4
+Ba6 $1 26. Rh3 Bxf1 27. Ng6+ Kg8 28. Nxf8 Rxf8 $2 29. Kxf1 Rc8 30. Rc3 $2 Rxc3 31.
+bxc3 Kf7 32. Kf2 Ke6 33. c4 Kd6 34. Ke3 Kc5 35. Kd3 h6 36. Kc3 g5 37. fxg5 hxg5
+38. a4 a5 39. Kd3 f4 40. Ke4 Kxc4 41. Kf5 Kd4 42. Kxg5 Ke4 43. Kf6 Kd4 44. Kf5
+Ke3 $2 45. Ke5 $1 f3 46. gxf3 Kxf3 47. Kd4 $2 Kf4 $9 48. Kc4 Ke5 49. Kb5 Kd6 50. Kxb6
+Kd7 51. Kxa5 Kc6 52. Ka6 Kc7 53. Kb5 Kb7 54. a5 Ka7 55. a6 Ka8 56. Kb6 Kb8 57.
+a7+ Ka8 $1 58. Kc7 Kxa7 1/2-1/2

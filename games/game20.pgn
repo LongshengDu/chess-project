@@ -1,0 +1,37 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.09.25"]
+[Round "-"]
+[White "JMWchess"]
+[Black "carlosmiguelbeltran"]
+[Result "0-1"]
+[CurrentPosition "8/6BR/r7/4p1NP/3nP3/2bk1P2/8/2K5 w - - 3 40"]
+[Timezone "UTC"]
+[ECO "C41"]
+[ECOUrl "https://www.chess.com/openings/Philidor-Defense-3.d4-Bg4-4.dxe5"]
+[UTCDate "2026.09.25"]
+[UTCTime "17:55:24"]
+[WhiteElo "1341"]
+[BlackElo "1366"]
+[WhiteEloEstimate "750"]
+[BlackEloEstimate "1250"]
+[TimeControl "900+10"]
+[Termination "carlosmiguelbeltran won by resignation"]
+[StartTime "17:55:24"]
+[EndDate "2026.09.25"]
+[EndTime "18:09:54"]
+[Link "https://www.chess.com/analysis/game/live/184368794696/analysis"]
+[WhiteUrl "https://images.chesscomfiles.com/uploads/v1/user/5858159.59bbbe4e.50x50o.606a1b628ca7.jpg"]
+[WhiteCountry "2"]
+[WhiteTitle ""]
+[BlackUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[BlackCountry "163"]
+[BlackTitle ""]
+
+1. e4 e5 2. Nf3 d6 3. d4 Bg4 4. dxe5 Bxf3 $6 5. Qxf3 dxe5 6. Bc4 Qf6 7. Nd2 $6
+Qxf3 8. Nxf3 f6 9. Be3 Ne7 10. O-O-O Nec6 $6 11. g4 Bd6 12. g5 Nd7 13. Rhg1
+O-O-O $6 14. Be6 $6 Rde8 $6 15. Bxd7+ $2 Kxd7 16. gxf6 gxf6 17. Rg7+ Kc8 18. c4 Reg8
+19. Bh6 $2 Rxg7 $1 20. Bxg7 Rg8 $1 21. Bxf6 $2 Re8 $9 22. a3 $4 Re6 $9 23. Bg5 h6 $6 24. Be3
+b6 25. b4 $6 a5 26. c5 Be7 27. cxb6 cxb6 28. Bxb6 axb4 $6 29. axb4 Bxb4 30. Rd5 $2
+Kb7 $9 31. Be3 $1 Bc3 $6 32. Rd7+ $6 Ka6 $6 33. Rh7 $6 Kb5 34. Bxh6 $2 Kc4 $9 35. Ng5 $9
+Rg6 36. h4 $6 Kd3 $6 37. h5 Rf6 38. f3 $2 Nd4 $1 39. Bg7 $2 Ra6 $1 0-1

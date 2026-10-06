@@ -1,0 +1,37 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.10.04"]
+[Round "-"]
+[White "carlosmiguelbeltran"]
+[Black "EugeneMukhin"]
+[Result "0-1"]
+[CurrentPosition "2k5/5p1p/1bP5/1P3K1P/8/5P2/8/q7 w - - 0 42"]
+[Timezone "UTC"]
+[ECO "B04"]
+[ECOUrl "https://www.chess.com/openings/Alekhines-Defense-Modern-Variation"]
+[UTCDate "2026.10.04"]
+[UTCTime "01:46:01"]
+[WhiteElo "1355"]
+[BlackElo "1411"]
+[WhiteEloEstimate "1800"]
+[BlackEloEstimate "2150"]
+[TimeControl "900+10"]
+[Termination "EugeneMukhin won by resignation"]
+[StartTime "01:46:01"]
+[EndDate "2026.10.04"]
+[EndTime "02:05:29"]
+[Link "https://www.chess.com/analysis/game/live/184781772870/analysis?move=81"]
+[WhiteUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[WhiteCountry "163"]
+[WhiteTitle ""]
+[BlackUrl "https://images.chesscomfiles.com/uploads/v1/user/101811504.46fcad27.50x50o.abc8a1590bd1.jpg"]
+[BlackCountry "3"]
+[BlackTitle ""]
+
+1. e4 Nf6 2. e5 Nd5 3. Nf3 d6 4. d4 Nc6 5. c3 $6 Bg4 $6 6. Be2 e6 7. O-O Bxf3 8.
+Bxf3 dxe5 9. dxe5 Nxe5 $6 10. Re1 $2 Nxf3+ $1 11. Qxf3 Bd6 $6 12. Be3 $2 Qf6 13. Qxf6
+gxf6 14. a3 Nxe3 15. Rxe3 O-O-O 16. Re2 Bf4 17. g3 $6 Rd1+ 18. Kg2 Rg8 19. Kf3
+Bh6 20. h4 $6 Rgd8 21. Kg2 f5 22. c4 Rc1 23. b3 $2 Rd3 24. b4 Rdd1 25. c5 $2 Rxb1 26.
+Rxb1 Rxb1 27. Rc2 Rb3 28. Ra2 Bc1 29. f3 Rb2+ 30. Rxb2 Bxb2 31. a4 Ba3 32. b5
+Bxc5 33. Kh3 a5 34. g4 $6 c6 35. bxc6 b5 36. axb5 Bb6 37. gxf5 exf5 38. h5 a4 39.
+Kh4 $6 a3 40. Kg5 a2 41. Kxf5 a1=Q 0-1

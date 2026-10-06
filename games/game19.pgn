@@ -1,0 +1,38 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.09.30"]
+[Round "-"]
+[White "2_BOT_3"]
+[Black "carlosmiguelbeltran"]
+[Result "0-1"]
+[CurrentPosition "5k2/1R6/5p1P/5P2/4r1K1/6P1/8/8 w - - 2 50"]
+[Timezone "UTC"]
+[ECO "D00"]
+[ECOUrl "https://www.chess.com/openings/Queens-Pawn-Opening-1...d5-2.e3-Nf6-3.c4"]
+[UTCDate "2026.09.30"]
+[UTCTime "14:54:54"]
+[WhiteElo "1380"]
+[BlackElo "1402"]
+[WhiteEloEstimate "1050"]
+[BlackEloEstimate "900"]
+[TimeControl "900+10"]
+[Termination "carlosmiguelbeltran won by resignation"]
+[StartTime "14:54:54"]
+[EndDate "2026.09.30"]
+[EndTime "15:15:21"]
+[Link "https://www.chess.com/analysis/game/live/184608330612/analysis"]
+[WhiteUrl "https://images.chesscomfiles.com/uploads/v1/user/570605604.038abd14.50x50o.c437080b95c4.jpg"]
+[WhiteCountry "69"]
+[WhiteTitle ""]
+[BlackUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[BlackCountry "163"]
+[BlackTitle ""]
+
+1. d4 d5 2. e3 Nf6 3. c4 c6 4. Nf3 e6 5. a3 Bd6 6. Nc3 O-O 7. c5 Bc7 8. b4 a5 $6
+9. Bb2 axb4 10. axb4 Rxa1 11. Bxa1 b5 12. Bd3 Na6 13. Qb3 Re8 14. O-O e5 $2 15.
+dxe5 Bxe5 $2 16. Nxe5 Rxe5 17. Nxb5 Rg5 18. Nd6 $6 Nc7 $9 19. Nxc8 Qxc8 20. Bxf6 $2
+gxf6 $9 21. f4 Rh5 22. Be2 Rh6 23. b5 $2 Ne6 $2 24. bxc6 Qxc6 25. Qb4 $6 Qxc5 26. Qxc5
+Nxc5 27. Bf3 $2 Ne4 $6 28. Rd1 Nc3 $2 29. Rd3 $1 Ne4 30. Rxd5 f5 31. Rxf5 Re6 32. Bxe4
+Rxe4 33. Kf2 Kg7 34. Kf3 Ra4 35. h4 f6 36. Rb5 Ra1 37. f5 $2 Rf1+ $2 38. Ke4 $9 Rg1 $9
+39. Kf3 $9 Rf1+ $2 40. Kg4 $1 Rh1 $2 41. g3 $9 Re1 42. Rb7+ Kg8 43. Rb3 Rg1 44. h5 $2 Kg7
+$9 45. Rb7+ $1 Kg8 46. h6 $2 Re1 $9 47. Rg7+ Kf8 48. Rxh7 Rxe3 49. Rb7 Re4+ 0-1

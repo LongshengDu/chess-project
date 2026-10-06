@@ -1,0 +1,16 @@
+{
+  "torch": "2.14.0+cu130",
+  "device": "cpu",
+  "model": "maia3-79m",
+  "ratings": 21,
+  "maia_cold_seconds": 1.391460200000438,
+  "maia_warm_seconds": [
+    0.620165200001793,
+    0.6007696999877226,
+    0.6302768000023207
+  ],
+  "maia_warm_median_seconds": 0.620165200001793,
+  "stockfish_threads": 8,
+  "strategy": "baseline",
+  "stockfish": []
+}

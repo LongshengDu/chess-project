@@ -1,0 +1,40 @@
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2026.10.04"]
+[Round "-"]
+[White "julaola"]
+[Black "chessfuryHxc4"]
+[Result "1-0"]
+[CurrentPosition "8/5P2/4k3/p2r3p/2K4P/P1P2R2/1P6/8 b - - 0 58"]
+[Timezone "UTC"]
+[ECO "C00"]
+[ECOUrl "https://www.chess.com/openings/French-Defense-La-Bourdonnais-Variation-2...d5"]
+[UTCDate "2026.10.04"]
+[UTCTime "17:11:30"]
+[WhiteElo "1554"]
+[BlackElo "1459"]
+[WhiteEloEstimate "1450"]
+[BlackEloEstimate "1250"]
+[TimeControl "900+10"]
+[Termination "julaola won by resignation"]
+[StartTime "17:11:30"]
+[EndDate "2026.10.04"]
+[EndTime "17:37:27"]
+[Link "https://www.chess.com/analysis/game/live/184814564972/analysis"]
+[WhiteUrl "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif"]
+[WhiteCountry "112"]
+[WhiteTitle ""]
+[BlackUrl "https://images.chesscomfiles.com/uploads/v1/user/19082492.bb9cde74.50x50o.5e532d3ec8cf.jpeg"]
+[BlackCountry "112"]
+[BlackTitle ""]
+
+1. e4 e6 2. f4 d5 3. exd5 $6 exd5 4. Nf3 Nc6 5. d4 Nf6 6. Be2 Ne4 $6 7. O-O Bg4 8.
+h3 $2 Bxf3 9. Bxf3 Be7 $2 10. Re1 $6 f5 11. Bxe4 $6 fxe4 $6 12. Qh5+ $2 g6 $1 13. Qd1 Bf6 $6
+14. c3 $2 O-O 15. Qg4 $6 Bh4 $2 16. Rf1 Qf6 $4 17. Be3 $9 h5 18. Qd7 $2 Rf7 $4 19. Qxd5
+Re8 $6 20. Nd2 $6 b6 $2 21. Nxe4 $9 Qe7 22. Qxc6 Qxe4 23. Qxe4 Rxe4 24. Rf3 Rfe7 25.
+Bd2 Re2 $6 26. Rd1 $1 c5 27. g3 Bf6 28. d5 Rd7 29. Rd3 $6 c4 30. Re3 $1 Rxe3 $2 31. Bxe3
+Kf7 32. Kf2 Ke7 33. Kf3 b5 34. a3 a5 35. Bd4 Bxd4 36. Rxd4 Kd6 37. Ke4 $6 Re7+
+38. Kf3 Re1 39. Rd2 Rh1 40. h4 $6 Rf1+ $6 41. Kg2 $1 Re1 42. Kf2 Rh1 43. Kf3 $2 Re1 $2
+44. Rf2 $9 Kxd5 45. g4 $2 Rd1 $9 46. gxh5 gxh5 47. Ke3 $2 Rd3+ 48. Ke2 Ke4 $1 49. f5
+Rd6 $2 50. f6 $1 Rd8 51. f7 Rf8 52. Rf3 Ke5 53. Ke3 Ke6 54. Kd4 Rd8+ 55. Kc5 Rd5+
+56. Kb6 Rd6+ 57. Kxb5 Rd5+ 58. Kxc4 1-0
