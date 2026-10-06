@@ -96,6 +96,8 @@ belong at the repository root. Dependency-owned manifests stay inside `deps/`.
 | [web](web/README.md) | Upstream frontend integration, local adapters, build tools and performance |
 | [tests](tests/README.md) | Component regression suites, fixtures, development checks and preserved experiments |
 
+Reusable agent instructions live in [.agents/skills/project-development/SKILL.md](.agents/skills/project-development/SKILL.md), which routes to the [analysis](.agents/skills/chess-analysis/SKILL.md), [player-rating methods](.agents/skills/chess-player-rating/SKILL.md), [backend](.agents/skills/chess-backend/SKILL.md), [coach](.agents/skills/chess-coach/SKILL.md), [docs](.agents/skills/chess-docs/SKILL.md), [engine](.agents/skills/chess-engine/SKILL.md), [games](.agents/skills/chess-games/SKILL.md), [tests](.agents/skills/chess-tests/SKILL.md), and [web](.agents/skills/chess-web/SKILL.md) skills. These capture lasting project instructions; current tasks and configuration remain the source for specific actions and parameter values.
+
 Dependency sources are pinned submodules under `deps/`: Maia, the Maia platform
 frontend and Lichess Lila. Update revisions deliberately and check
 the compatibility transforms when updating the frontend.
