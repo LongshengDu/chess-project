@@ -7,18 +7,19 @@ from pathlib import Path
 import chess
 import chess.svg
 
-from analysis.cache import identity
+from analysis.cache.storage import identity
 
 
 class BoardDiagrams:
-    def __init__(self, analysis, board, output_dir):
+    def __init__(self, analysis, board, output_dir, *, side):
         self.analysis, self.board, self.directory = analysis, board, Path(output_dir)
+        self.side = side
         self.paths = set()
 
     def render(self, history, arrows=(), *, played=False):
         board = self.board(history)
         played = played if arrows else False
-        orientation = self.analysis['selected_player']['side'] == 'white'
+        orientation = self.side == 'white'
         relative = f'positions/{identity([self.analysis["start_fen"], history, arrows, orientation, played])[:16]}.svg'
         colors = ('#e69138cc', '#189b55cc') if played else ('#189b55cc', '#e69138cc')
         converted = [chess.svg.Arrow(chess.Move.from_uci(uci).from_square, chess.Move.from_uci(uci).to_square,

@@ -116,14 +116,14 @@ class PlatformPlay:
         game.setup(chess.Board(state['start_fen']))
         human = state['player_color'].title()
         computer = 'Black' if human == 'White' else 'White'
-        game.headers.update(Event='Local Maia game', Site='Local', Date=state['date'],
+        game.headers.update(Event='Local Maia game', Site='lichess.org', Date=state['date'],
                             Result=state['termination']['result'] if state['termination'] else '*')
         game.headers[human] = 'You'
         game.headers[computer] = f"Maia3 ({state['maia_rating']})"
-        game.headers[computer + 'Elo'] = str(state['maia_rating'])
+        game.headers.update(WhiteElo=str(state['maia_rating']), BlackElo=str(state['maia_rating']))
         game.headers['MaiaModel'] = state['model']
         base, increment = time_control(state['time_control'])
-        game.headers['TimeControl'] = '-' if base is None else f'{base // 1000}+{increment // 1000}'
+        game.headers['TimeControl'] = '300' if base is None else f'{base // 1000}+{increment // 1000}'
         if state['termination']:
             game.headers['Termination'] = {'resign': 'resignation', 'time': 'time forfeit', 'rules': 'normal'}[state['termination']['type']]
         node = game
@@ -265,10 +265,8 @@ class PlatformPlay:
                 self._forfeit(state, board, 'time')
                 self._save(state)
                 return self._response(state, top_move=None, move_delay=0)
-            # The same already-loaded Maia object and lock are shared with analysis.
-            with self.platform.maia_lock:
-                predictions = self.platform.maia.batch_evaluate([board.fen()], [state['maia_rating']],
-                    [state['maia_rating']], boards=[board.copy(stack=True)])
+            predictions = self.platform.maia_predictions(
+                [board.copy(stack=True)], [state['maia_rating']], [state['maia_rating']])
             if expired():
                 self._forfeit(state, board, 'time')
                 self._save(state)

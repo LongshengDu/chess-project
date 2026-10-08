@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from analysis.game.performance import refresh_performance
+from analysis.accuracy.performance import refresh_performance
+from analysis.cache.artifacts import AnalysisStore
 from .report_performance import insert_performance_snapshot
-from analysis.cache import write_json
-from .agent_budget import RunBudget
+from analysis.cache.storage import write_json
+from .agent_budget import CoachingLimitError, RunBudget
 from .tools_evidence import prepare_initial_evidence
 from .tools_chess import ChessTools
 from .agent_progress import CoachProgress, PROGRESS_INSTRUCTIONS, print_progress
@@ -41,7 +42,7 @@ class CoachingRequest:
             raise ValueError('Tool-call limit cannot be negative.')
 
 
-def run_coach(analysis, engines, output_dir, *, model_id=None, client_factory=None,
+def run_coach(analysis, session, output_dir, *, side, model_id=None, client_factory=None,
               max_model_responses=CONFIG['COACH']['MAX_MODEL_RESPONSES'], max_tokens=CONFIG['COACH']['OUTPUT_TOKEN_ESTIMATE'],
               request: CoachingRequest | None = None, progress=print_progress):
     """Run Codex with caller-supplied content, validation and limits."""
@@ -49,9 +50,10 @@ def run_coach(analysis, engines, output_dir, *, model_id=None, client_factory=No
     refresh_performance(analysis)
     model_id = model_id or CONFIG['COACH']['CODEX']['MODEL']
     completed = False
+    failure = None
     budget = RunBudget(max_model_responses=max_model_responses, max_tokens=request.token_budget, timeout=request.run_timeout)
     updates = CoachProgress(progress)
-    library = ChessTools(analysis, engines, output_dir,
+    library = ChessTools(analysis, session, output_dir, side=side,
                          max_calls=request.max_tool_calls if request.max_tool_calls is not None else max_model_responses*4,
                          progress=updates)
     library.check_budget = budget.check
@@ -63,7 +65,7 @@ def run_coach(analysis, engines, output_dir, *, model_id=None, client_factory=No
     validator = (lambda answer: request.validate_report(library, answer)) if request.validate_report else None
     gate = ReportGate(library, report_name=request.report_name, max_attempts=request.max_attempts, validator=validator,
                       render=lambda report: insert_performance_snapshot(report, analysis))
-    write_json(Path(output_dir) / 'analysis.json', {k: v for k, v in analysis.items() if k != 'agent_run'})
+    AnalysisStore(session.cache.directory).save(Path(output_dir) / 'analysis.json', analysis)
     instructions = request.instructions if request.instructions is not None else Path(__file__).with_name('prompt.txt').read_text(encoding='utf-8')
     instructions += '\n\n' + PROGRESS_INSTRUCTIONS
     try:
@@ -85,6 +87,12 @@ def run_coach(analysis, engines, output_dir, *, model_id=None, client_factory=No
         completed = True
         updates.emit(f'Report saved: {request.report_name}.md')
         return answer
+    except Exception as exc:
+        # Preserve explicit application diagnostics, not provider response bodies.
+        failure = {'type': type(exc).__name__}
+        if isinstance(exc, CoachingLimitError):
+            failure['message'] = str(exc)
+        raise
     finally:
         if not completed:
             updates.emit('Coaching stopped before completion; saved analysis and evidence remain available.')
@@ -102,6 +110,8 @@ def run_coach(analysis, engines, output_dir, *, model_id=None, client_factory=No
                                  'initial_tool_calls': sum(call['phase'] == 'initial' for call in library.invocations),
                                  'response_usage_file': 'response_usage.jsonl',
                                  'report_name': request.report_name, 'reasoning_effort': CONFIG['COACH']['CODEX']['REASONING_EFFORT'], 'usage': budget.summary()}
+        if failure is not None:
+            analysis['agent_run']['error'] = failure
         with usage_log.open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(analysis['agent_run']) + '\n')
         write_json(Path(output_dir) / 'agent_run.json', analysis['agent_run'])

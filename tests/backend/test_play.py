@@ -1,5 +1,6 @@
 """Offline local play, full-history Maia reuse, persistence and retry contracts."""
 from concurrent.futures import ThreadPoolExecutor
+import io
 import math
 from pathlib import Path
 import tempfile
@@ -7,7 +8,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import chess
+import chess.pgn
 
+from analysis.elo_convert import scale_from_headers
 from backend.app import create_app
 from backend.analysis_positions import PlatformAnalysis
 from backend.play import sample_move
@@ -19,6 +22,7 @@ class LocalPlayTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.enterContext(patch.dict(CONFIG['ANALYSIS'], CACHE_DIR=self.root/'evidence'))
         (self.root / 'index.html').write_text('local play')
         self.maia, self.stockfish = Mock(), Mock()
         self.preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6']
@@ -27,10 +31,14 @@ class LocalPlayTests(unittest.TestCase):
             for board in boards:
                 legal = sorted(m.uci() for m in board.legal_moves)
                 chosen = next((m for m in self.preferred if m in legal), legal[0])
-                policy = {m: .9 if m == chosen else .1 / max(1, len(legal)-1) for m in legal}
+                policy = {m: (1. if len(legal) == 1 else .9) if m == chosen else .1 / (len(legal)-1) for m in legal}
                 result.append({'policy': policy, 'value': .5})
             return result
         self.maia.batch_evaluate.side_effect = prediction
+        self.maia.model_signature = {'test_maia': 1}
+        self.stockfish.executable = __file__
+        self.stockfish.threads_per_worker = 1
+        self.stockfish.hash_mb = 16
         self.platform = PlatformAnalysis(self.maia, self.stockfish, self.root / 'games.sqlite3')
         self.app = create_app(self.platform, self.root)
         self.client = self.app.test_client()
@@ -57,7 +65,7 @@ class LocalPlayTests(unittest.TestCase):
     def snapshot(self, game_id):
         return self.client.get(f'/api/platform/games/{game_id}').json['snapshot']
 
-    def test_config_start_retry_and_no_fabricated_human_rating(self):
+    def test_config_start_retry_and_selected_rating_in_pgn(self):
         with patch.dict(CONFIG['MAIA'], PLAYER_RATING=1777, TEMPERATURE=.25, MODEL='maia3-79m'):
             self.assertEqual(self.client.get('/api/platform/play/config').json,
                              {'player_rating': 1777, 'temperature': .25, 'model': 'maia3-79m'})
@@ -69,8 +77,10 @@ class LocalPlayTests(unittest.TestCase):
         self.assertEqual(first['opponent_elo'], 1777)
         self.assertIsNone(first['player_elo'])
         snapshot = self.snapshot(first['game_id'])
-        self.assertNotIn('WhiteElo', snapshot['headers'])
+        self.assertEqual(snapshot['headers']['WhiteElo'], '1777')
         self.assertEqual(snapshot['headers']['BlackElo'], '1777')
+        self.assertEqual(snapshot['headers']['Site'], 'lichess.org')
+        self.assertEqual(snapshot['headers']['TimeControl'], '300')
         self.assertEqual(snapshot['headers']['MaiaModel'], 'maia3-79m')
         listing = self.client.get('/api/platform/games?type=play').json
         self.assertEqual(listing['total_games'], 1)
@@ -84,6 +94,30 @@ class LocalPlayTests(unittest.TestCase):
         for page in ('/play', '/play/maia'):
             with self.client.get(page) as response:
                 self.assertEqual(response.text, 'local play')
+        self.assertEqual(self.maia.mock_calls, [])
+
+    def test_play_pgn_metadata_survives_saving_and_analysis_handoff(self):
+        for color in ('white', 'black'):
+            for control, expected, scale in (('unlimited', '300', 'lb'),
+                                             ('3+0', '180+0', 'lb'),
+                                             ('5+3', '300+3', 'lb'),
+                                             ('10+0', '600+0', 'lr')):
+                with self.subTest(color=color, time_control=control):
+                    started = self.start(player_color=color, maia_rating=1850, time_control=control)
+                    game_id = started['game_id']
+                    self.submit(game_id, [], game_over_state='resign', winner='black' if color == 'white' else 'white')
+                    response = self.client.post(f'/api/platform/play/games/{game_id}/analysis')
+                    self.assertEqual(response.status_code, 200)
+                    snapshot = self.snapshot(game_id)
+                    headers = chess.pgn.read_game(io.StringIO(snapshot['plain_pgn'])).headers
+                    self.assertEqual(headers['WhiteElo'], '1850')
+                    self.assertEqual(headers['BlackElo'], '1850')
+                    self.assertEqual(headers['Site'], 'lichess.org')
+                    self.assertEqual(headers['TimeControl'], expected)
+                    self.assertEqual(scale_from_headers(headers), scale)
+                    self.assertEqual(snapshot['time_control'], control)
+                    if control == 'unlimited':
+                        self.assertEqual(snapshot['clocks'], {'white_ms': None, 'black_ms': None})
         self.assertEqual(self.maia.mock_calls, [])
 
     def test_move_uses_same_maia_with_full_history_and_commits_before_logging(self):

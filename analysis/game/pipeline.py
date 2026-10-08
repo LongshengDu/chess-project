@@ -1,4 +1,4 @@
-"""Whole-game orchestration over common engine and rating services."""
+"""Whole-game orchestration over common engines and accuracy curve evidence."""
 from __future__ import annotations
 
 import time
@@ -6,124 +6,105 @@ import time
 import chess
 import chess.pgn
 
-from analysis.cache import identity
+from analysis.cache.storage import identity
 from analysis.game.cancellation import AnalysisCancelled
-from analysis.position_evaluation import RATINGS, header_elo, eval_value, eval_loss, centipawns
+from analysis.position_evaluation import RATINGS, eval_value, eval_loss
 from analysis.move_hints import add_flags
-from analysis.game.performance import refresh_performance
+from analysis.accuracy.performance import refresh_performance
 from analysis.position_results import stockfish_result
 from analysis.settings import CONFIG
 
-from analysis.player_rating.policies import prepare_rating_policies
-from analysis.player_rating.parameters import RATINGS as FIT_RATINGS
-from analysis.player_rating.service import fit_game, get_estimator, store_elo_fit
-from analysis.player_rating.scale import rating_context, native_actual_ratings
+from analysis.accuracy.policies import prepare_policies
+from analysis.accuracy.evidence import RATINGS as ACCURACY_RATINGS
+from analysis.accuracy.service import refresh_saved_curve
+from analysis.maia_context import native_actual_ratings
+from analysis.game.metadata import game_metadata
 
-ANALYSIS_VERSION = 4
+ANALYSIS_VERSION = 9
 
 
-def prepare_game_policies(game, records, engines, *, predictions=None):
+def prepare_game_policies(game, records, predictions):
     """Prepare common Maia evidence and the policies used by move displays."""
-    fit_records = [{'move': row['played']['move'], 'side': row['side'].title()} for row in records]
-    def evaluate(board, own, opponents):
-        if predictions is not None:
-            return predictions[len(board.move_stack)]
-        return engines.human_pairs([move.uci() for move in board.move_stack], own, opponents)
-    evaluate_many = getattr(engines, 'human_pair_batches', None)
-    if predictions is not None:
-        evaluate_many = lambda requests: [evaluate(*request) for request in requests]
-    prepare_rating_policies(game, fit_records, evaluate,
-        engines.cache.directory / 'rating-policies', identity(engines.signature),
-        evaluate_many=evaluate_many)
-    for row, record in zip(records, fit_records, strict=True):
+    policy_records = [{'move': row['played']['move'], 'side': row['side'].title()} for row in records]
+    prepare_policies(game, policy_records, predictions)
+    for row, record in zip(records, policy_records, strict=True):
         row['_policies'] = {str(r): record['policies'][r] for r in RATINGS}
-        row['_rating_policies'] = record['policies']
 
 
 class GameAnalyzer:
-    """One game's analysis job, with explicit preparation, scoring and fitting phases."""
+    """One game's analysis job, with explicit preparation, scoring and accuracy phases."""
 
-    def __init__(self, game, engines, side=None, actual_elo=None, *, progress=print,
-                 on_position=None, cancel=None, rating_output_dir=None, rating_scale=None):
-        if side not in (None, 'white', 'black'):
-            raise ValueError('Player side must be white, black, or unspecified.')
-        if actual_elo is not None and (type(actual_elo) is not int or not 100 <= actual_elo <= 4000):
-            raise ValueError('Actual Elo must be an integer from 100 to 4000.')
+    def __init__(self, game, session, actual_elo=None, *, progress=print,
+                 on_position=None, cancel=None, accuracy_output_dir=None, rating_scale=None):
         self.game = game
-        self.engines = engines
-        self.side = side
-        self.actual_elo = actual_elo
-        self.rating_account_overrides = {side.title(): actual_elo} if side and actual_elo is not None else {}
-        if side and actual_elo is None:
-            self.actual_elo = header_elo(game.headers, side) or 1500
+        self.session = session
         self.progress = progress
         self.on_position = on_position
         self.cancel = cancel
-        self.rating_output_dir = rating_output_dir
+        self.accuracy_output_dir = accuracy_output_dir
         self.headers = dict(game.headers)
-        self.rating_scale_override = rating_scale
-        self.rating_context = rating_context(self.headers, rating_scale)
-        declared = {'headers': self.headers, 'rating_scale_override': self.rating_context}
-        self.native_header_ratings = native_actual_ratings(declared)
-        native_actual_ratings({**declared, 'rating_account_overrides': self.rating_account_overrides})
+        self.metadata = game_metadata(self.headers, actual_elo, rating_scale, game=game)
+        self.native_ratings = native_actual_ratings({'game': self.metadata})
 
     def run(self):
         started = time.perf_counter()
-        estimator = get_estimator()  # Reject invalid selection before engine work.
         self.rows = []
         self.history = []
         self.prepared = []
-        self.rating_policies = []
         self.all_scores = {}
         self.boards = []
 
         self._check_cancelled()
         self._positions()
-        self.progress(f'Maia rating evidence: {len(self.boards)} positions, equal-rating profiles from 600–2600 Lichess Blitz (cached).')
+        self.progress(f'Maia accuracy evidence: {len(self.boards)} positions, equal-rating profiles from 600–2600 Lichess Blitz.')
         self._prepare_maia()
-        prepare_game_policies(self.game, self.rows, self.engines, predictions=self.predictions)
+        prepare_game_policies(self.game, self.rows, self.predictions[:-1])
         jobs = self._jobs()
-        scans = (self.engines.analyze_positions(jobs, cancel=self.cancel) if hasattr(self.engines, 'analyze_positions')
-                 else ((i, self.engines.initial_analysis(*job)) for i, job in enumerate(jobs)))
+        scans = self.session.analyze_positions(jobs, cancel=self.cancel)
         try:
             for completed, (index, scan) in enumerate(scans, 1):
                 self._check_cancelled()
-                self.positions[index]['stockfish'] = stockfish_result(self.boards[index], scan)
+                if scan is None and index < len(self.rows):
+                    raise ValueError('Every played position requires complete Stockfish evidence.')
+                self.positions[index]['stockfish'] = stockfish_result(self.boards[index], scan) if scan is not None else None
                 if index < len(self.rows):
                     self._apply_scan(index, scan)
                 if self.on_position:
                     self.on_position(index, self.positions[index])
                 label = self.rows[index]['label'] if index < len(self.rows) else 'final position'
-                self.progress(f'Analyzed {completed}/{len(self.boards)}: {label}')
+                self.progress(f'Analyzed {completed}/{len(self.boards)}: {label}' if scan is not None else
+                              f'Prepared {completed}/{len(self.boards)}: {label} (unscored)')
         finally:
-            if hasattr(scans, 'close'):
-                scans.close()
+            scans.close()
         self._check_cancelled()
-        self.progress(f'Estimating played level with {estimator.name}…')
-        fitting = time.perf_counter()
-        fit = self._fit()
-        record = getattr(self.engines, 'record', None)
-        if record:
-            record('player_rating', wall_ms=(time.perf_counter()-fitting)*1000)
+        record = getattr(self.session, 'record', None)
+        references = self.session.position_references(self.boards, ACCURACY_RATINGS)
+        # Keep the UI view identical to the pinned measurements; do not round-trip
+        # engine payloads into a second cache representation.
+        for position, reference in zip(self.positions, references, strict=True):
+            position['stockfish'] = self.session.cache.get_reference(reference['stockfish'])
         analysis = {
             'schema_version': ANALYSIS_VERSION,
             'game_id': identity([self.game.board().fen(), self.history]),
             'headers': self.headers,
             'start_fen': self.game.board().fen(),
-            'selected_player': {'side': self.side, 'actual_elo': self.actual_elo},
-            'rating_account_overrides': self.rating_account_overrides,
-            'analysis_execution': getattr(self.engines, 'last_analysis_execution', None),
+            'game': self.metadata,
+            'coaching': {},
+            'analysis_execution': getattr(self.session, 'last_analysis_execution', None),
             'positions': self.positions,
+            'position_references': references,
             'moves': self.rows,
         }
-        if self.rating_scale_override is not None:
-            analysis['rating_scale_override'] = self.rating_context['scale']
-        store_elo_fit(analysis, fit)
         result = refresh_performance(add_flags(analysis, self.all_scores))
+        self.progress('Calculating native accuracy curve and absolute deviation...')
+        measuring = time.perf_counter()
+        refresh_saved_curve(result)
+        if record:
+            record('accuracy_curve', wall_ms=(time.perf_counter()-measuring)*1000)
         self._check_cancelled()
-        if self.rating_output_dir is not None:
-            from analysis.player_rating.figures import export_saved_figures
-            export_saved_figures(result, self.rating_output_dir)
+        if self.accuracy_output_dir is not None:
+            from analysis.accuracy.figures import export_saved_figures
+            export_saved_figures(result, self.accuracy_output_dir)
         if record:
             record('game_analysis_completed', wall_ms=(time.perf_counter()-started)*1000)
         return result
@@ -148,48 +129,35 @@ class GameAnalyzer:
     def _prepare_maia(self):
         """Infer each position/rating pair once, retaining policy and value for every UI."""
         self.predictions = [None] * len(self.boards)
-        pending = []
-        for index, board in enumerate(self.boards):
-            started = time.perf_counter()
-            outcome = board.outcome(claim_draw=False)
-            if outcome is not None:
-                value = .5 if outcome.winner is None else float(outcome.winner)
-                self.predictions[index] = [{'policy': {}, 'value': value} for _ in FIT_RATINGS]
-                if getattr(self.engines, 'record', None):
-                    self.engines.record('maia_terminal', fen=board.fen(), ply=index,
-                                        wall_ms=(time.perf_counter()-started)*1000)
-            else:
-                pending.append(index)
-        size = max(1, CONFIG['MAIA']['BATCH_SIZE'] // len(FIT_RATINGS))
+        pending = list(range(len(self.boards)))
+        size = max(1, CONFIG['MAIA']['BATCH_SIZE'] // len(ACCURACY_RATINGS))
         for offset in range(0, len(pending), size):
             self._check_cancelled()
             indices = pending[offset:offset+size]
-            requests = [(self.boards[i], list(FIT_RATINGS), list(FIT_RATINGS)) for i in indices]
-            batches = (self.engines.human_pair_batches(requests) if hasattr(self.engines, 'human_pair_batches') else
-                       [self.engines.human_pairs([move.uci() for move in board.move_stack], own, other)
-                        for board, own, other in requests])
+            requests = [(self.boards[i], list(ACCURACY_RATINGS), list(ACCURACY_RATINGS)) for i in indices]
+            batches = self.session.human_pair_batches(requests)
             for index, entries in zip(indices, batches, strict=True):
                 self.predictions[index] = entries
         self._check_cancelled()
         self.positions = [{'ply': index, 'fen': board.fen(en_passant='fen'),
-                           'maia': {f'maia_kdd_{rating}': entry for rating, entry in zip(FIT_RATINGS, entries, strict=True)}}
+                           'maia': {f'maia_kdd_{rating}': entry for rating, entry in zip(ACCURACY_RATINGS, entries, strict=True)
+                                    if entry is not None}}
                           for index, (board, entries) in enumerate(zip(self.boards, self.predictions, strict=True))]
 
     def _jobs(self):
         jobs = []
         for row in self.rows:
             policies = row.pop('_policies')
-            self.rating_policies.append(row.pop('_rating_policies', None))
             top = {rating: sorted(policy, key=lambda m: (-policy[m], m))[:5]
                    for rating, policy in policies.items()}
-            # Engine evidence must not depend on which client requests a report.
-            level = self.native_header_ratings[row['side'].title()]
+            # Both clients schedule searches using the effective account context.
+            level = self.native_ratings[row['side'].title()]
             level = 1500 if level is None else level
             near = str(min(RATINGS, key=lambda rating: abs(rating-level)))
             jobs.append((self.history.copy(), row['played']['move'], top[near][:4]))
             self.prepared.append((policies, top))
             self.history.append(row['played']['move'])
-        final = self.positions[-1]['maia']['maia_kdd_1500']['policy']
+        final = self.positions[-1]['maia'].get('maia_kdd_1500', {}).get('policy', {})
         jobs.append((self.history.copy(), None, sorted(final, key=lambda move: (-final[move], move))[:4]))
         return jobs
 
@@ -222,8 +190,8 @@ class GameAnalyzer:
         row.update(
             position_eval=best,
             played=values[row['played']['move']],
-            maia={rating: [{**values[move], 'p': float(f'{policies[rating][move]:.5g}')}
-                          for move in moves] for rating, moves in top.items()},
+            maia={rating: {'moves': [{**values[move], 'p': float(f'{policies[rating][move]:.5g}')}
+                                    for move in moves]} for rating, moves in top.items()},
             candidate_moves=[
                 {**value, 'maia_p': {rating: float(f'{policy[move]:.5g}')
                                     for rating, policy in policies.items()}}
@@ -231,32 +199,16 @@ class GameAnalyzer:
             ],
         )
 
-    def _fit(self):
-        records = [
-            {'move': row['played']['move'], 'position_score': centipawns(row['position_eval']),
-             'scores': {entry['move']: centipawns(entry['eval'])
-                        for entry in self.all_scores[row['ply']]},
-             'policies': policies}
-            for row, policies in zip(self.rows, self.rating_policies, strict=True)
-        ]
-        return fit_game(
-            self.game, records,
-            lambda board, own, other: self.engines.human_pairs(
-                [move.uci() for move in board.move_stack], own, other),
-            self.engines.cache.directory, identity(self.engines.signature),
-            evaluate_many=getattr(self.engines, 'human_pair_batches', None),
-            ratings=self.rating_account_overrides,
-            rating_scale=self.rating_context,
-        )
 
+def analyze_game(game, session, actual_elo=None, *, progress=print, on_position=None, cancel=None,
+                 accuracy_output_dir=None, rating_scale=None):
+    """Analyze one game; optionally export default SVGs into its game output folder.
 
-def analyze_game(game, engines, side=None, actual_elo=None, *, progress=print, on_position=None, cancel=None,
-                 rating_output_dir=None, rating_scale=None):
-    """Analyze one game; optionally export into its explicit player-rating folder.
-
-    Without ``rating_output_dir``, the caller controls output publication, as the
+    ``actual_elo`` overrides both players' account ratings; omitted ratings come
+    from their respective PGN headers. Saved evidence covers both players.
+    Without ``accuracy_output_dir``, the caller controls output publication, as the
     web job does when staging a result for its transactional repository save.
     """
-    return GameAnalyzer(game, engines, side, actual_elo, progress=progress,
-                        on_position=on_position, cancel=cancel, rating_output_dir=rating_output_dir,
+    return GameAnalyzer(game, session, actual_elo, progress=progress,
+                        on_position=on_position, cancel=cancel, accuracy_output_dir=accuracy_output_dir,
                         rating_scale=rating_scale).run()

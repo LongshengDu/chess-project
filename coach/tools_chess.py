@@ -9,10 +9,11 @@ import chess
 
 from analysis.game.context import leadup_context
 from analysis.position_evaluation import PIECE_VALUES, clip_elo, eval_value
-from analysis.player_rating.scale import native_player_rating
+from analysis.maia_context import native_player_rating
 from analysis.game.summary import compact_summary
+from analysis.accuracy.comparison import AccuracyComparison
 from analysis.game.history import history_at
-from analysis.cache import identity
+from analysis.cache.storage import identity
 from .agent_budget import CoachingLimitError
 from .report_diagrams import BoardDiagrams
 from .tools_evidence import ToolEvidence, compact_evidence
@@ -37,14 +38,17 @@ def _maia_moves(board, policy, topk):
 
 
 class ChessTools:
-    def __init__(self, analysis, engines, output_dir, *, max_calls=None, progress=None):
-        self.analysis, self.engines, self.directory = analysis, engines, Path(output_dir)
+    def __init__(self, analysis, session, output_dir, *, side, max_calls=None, progress=None):
+        if side not in ('white', 'black'):
+            raise ValueError('Choose White or Black for coaching.')
+        self.side = side
+        self.analysis, self.session, self.directory = analysis, session, Path(output_dir)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.trace = self.directory / 'agent_trace.jsonl'
         self.trace.write_text('', encoding='utf-8')
         self.rows = {tuple(history_at(analysis, row['ply'])): row for row in analysis['moves']}
         self.results, self.invocations, self.investigated = {}, [], set()
-        self.diagrams = BoardDiagrams(analysis, engines.board, self.directory)
+        self.diagrams = BoardDiagrams(analysis, session.board, self.directory, side=side)
         self.tools = chess_tools(self)
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         self.request_cache = {}
@@ -56,7 +60,7 @@ class ChessTools:
         self.progress = progress if progress is not None else CoachProgress()
 
     def get_leadup(self, ply, lookback_plies=8):
-        return leadup_context(self.analysis, [ply], lookback_plies)
+        return leadup_context(self.analysis, [ply], lookback_plies, side=self.side)
 
     def investigate_batch(self, requests):
         if not isinstance(requests, list) or not 1 <= len(requests) <= 6:
@@ -104,9 +108,7 @@ class ChessTools:
                 self.request_cache[request_id] = result_id
             else:
                 result = self.results[result_id]
-            selected_side = self.analysis['selected_player']['side']
-            level = (native_player_rating(self.analysis, selected_side)
-                     or native_player_rating(self.analysis, selected_side, fitted=True) or 1500)
+            level = native_player_rating(self.analysis, self.side) or 1500
             evidence = ToolEvidence(**{'result_id': result_id, 'maia_rating_scale': 'Lichess Blitz',
                                       **compact_evidence(result, level)})
             for branch in (evidence, evidence.get('played', {}), evidence.get('candidate', {})):
@@ -147,11 +149,19 @@ class ChessTools:
                 stream.write(json.dumps(event, ensure_ascii=False) + '\n')
 
     def get_game_analysis(self):
-        return compact_summary(self.analysis)
+        return compact_summary(self.analysis, self.side)
+
+    def compare_position_difficulty(self, ratings=None, stage=None, from_ply=1, to_ply=None):
+        return AccuracyComparison(self.analysis).compare_positions(ratings, stage, from_ply, to_ply)
+
+    def get_accuracy_by_move(self, maia_elo=1600, side=None, stage=None, from_ply=1,
+                             to_ply=None, order='chronological', limit=12):
+        return AccuracyComparison(self.analysis).by_move(
+            maia_elo, side, stage, from_ply, to_ply, order, limit)
 
     def get_position(self, ply, line=None):
         history = history_at(self.analysis, ply, line)
-        board = self.engines.board(history)
+        board = self.session.board(history)
         baseline = self.rows.get(tuple(history))
         return {'position': {'ply': ply, 'line': line or []}, 'fen': board.fen(),
             'turn': 'white' if board.turn else 'black',
@@ -163,16 +173,16 @@ class ChessTools:
             'baseline': baseline, 'diagram': self.diagrams.render(history, [baseline['played']['move']] if baseline else [], played=True)}
 
     def opponent_elo(self, history):
-        other = 'black' if self.engines.board(history).turn else 'white'
-        return clip_elo(native_player_rating(self.analysis, other, fitted=True) or 1500)
+        other = 'black' if self.session.board(history).turn else 'white'
+        return clip_elo(native_player_rating(self.analysis, other) or 1500)
 
     def maia_analyze(self, ply, player_elo, opponent_elo, line=None, topk=3):
         history = history_at(self.analysis, ply, line)
-        board = self.engines.board(history)
+        board = self.session.board(history)
         topk = 3 if topk is None else topk
         if type(topk) is not int or not 1 <= topk <= 5:
             raise ValueError('topk must be 1–5.')
-        policy = self.engines.human(history, [player_elo], opponent_elo)[str(player_elo)]['policy']
+        policy = self.session.human(history, [player_elo], opponent_elo)[str(player_elo)]['policy']
         return {'position': {'ply': ply, 'line': line or []}, 'opponent_elo': opponent_elo,
                 'maia': {str(player_elo): _maia_moves(board, policy, topk)}}
 
@@ -185,15 +195,15 @@ class ChessTools:
         if baseline and all(str(r) in baseline['maia'] for r in ratings):
             return {'position': {'ply': ply, 'line': line or []},
                     'conditioning': 'equal_rating',
-                    'maia': {str(r): baseline['maia'][str(r)][:topk] for r in ratings}}
+                    'maia': {str(r): baseline['maia'][str(r)]['moves'][:topk] for r in ratings}}
         opponent = self.opponent_elo(history)
-        policies = self.engines.human(history, ratings, opponent)
-        board = self.engines.board(history)
+        policies = self.session.human(history, ratings, opponent)
+        board = self.session.board(history)
         return {'position': {'ply': ply, 'line': line or []}, 'conditioning': 'fixed_opponent_elo', 'opponent_elo': opponent,
                 'maia': {str(r): _maia_moves(board, policies[str(r)]['policy'], topk) for r in ratings}}
 
     def scored_lines(self, history, result):
-        board = self.engines.board(history)
+        board = self.session.board(history)
         if result.get('terminal'):
             return {'terminal': True, 'result': result['result'], 'eval': eval_value(result['evaluation']), 'lines': []}
         return {'lines': [{'move': item['uci'], 'san': item['san'], 'eval': eval_value(item), 'depth': item['depth'],
@@ -204,7 +214,7 @@ class ChessTools:
         history = history_at(self.analysis, ply, line)
         if not 1 <= (multipv or 2) <= 5 or not 1 <= (pv_plies or 8) <= 16:
             raise ValueError('Use MultiPV 1–5 and PV length 1–16.')
-        result = self.engines.sf(history, movetime_ms, multipv or 2, root_moves, pv_plies or 8)
+        result = self.session.sf(history, movetime_ms, multipv or 2, root_moves, pv_plies or 8)
         return {'position': {'ply': ply, 'line': line or []}, **self.scored_lines(history, result)}
 
     def human_replies(self, ply, line, engine_reply, movetime_ms):
@@ -216,20 +226,19 @@ class ChessTools:
         probability remains explicit; these are not calibrated win chances.
         """
         history = history_at(self.analysis, ply, line)
-        board = self.engines.board(history)
+        board = self.session.board(history)
         if board.is_game_over(claim_draw=False):
             return None
         side = 'white' if board.turn else 'black'
-        fitted = native_player_rating(self.analysis, side, fitted=True)
         actual = native_player_rating(self.analysis, side)
-        reference = max(1000, min(2600, round((actual or fitted or 1500)/100)*100))
-        ratings = sorted({reference, max(1000, min(2600, round((fitted or reference)/100)*100)), 2000, 2200, 2600})
+        reference = max(1000, min(2600, round((actual or 1500)/100)*100))
+        ratings = sorted({reference, 2000, 2200, 2600})
         baseline = self.rows.get(tuple(history))
         if baseline:
             curves = {c['move']: c['maia_p'] for c in baseline['candidate_moves']}
-            ranked = {r: [c['move'] for c in baseline['maia'][str(r)]] for r in ratings}
+            ranked = {r: [c['move'] for c in baseline['maia'][str(r)]['moves']] for r in ratings}
         else:
-            policies = self.engines.human_pairs(history, ratings, ratings)
+            policies = self.session.human_pairs(history, ratings, ratings)
             curves = {m.uci(): {str(r): policy['policy'][m.uci()] for r, policy in zip(ratings, policies, strict=True)}
                       for m in board.legal_moves}
             ranked = {r: sorted(curves, key=lambda m: (-curves[m][str(r)], m)) for r in ratings}
@@ -243,7 +252,7 @@ class ChessTools:
         missing = [m for m in choices if m not in evaluations]
         if missing:
             self.check_budget()
-            checked = self.engines.sf(history, movetime_ms, multipv=len(missing), root_moves=missing, pv_plies=2)
+            checked = self.session.sf(history, movetime_ms, multipv=len(missing), root_moves=missing, pv_plies=2)
             evaluations.update({c['uci']: eval_value(c) for c in checked['lines']})
         replies = []
         for uci in choices:
@@ -276,20 +285,18 @@ class ChessTools:
         max_plies = 8 if max_plies is None else max_plies
         if type(max_plies) is not int or not 2 <= max_plies <= 16:
             raise ValueError('Branch length must be 2–16 plies.')
-        ms = self.engines.limits.verify_ms if stockfish_ms is None else stockfish_ms
-        selected_side = self.analysis['selected_player']['side']
-        level = (native_player_rating(self.analysis, selected_side)
-                 or native_player_rating(self.analysis, selected_side, fitted=True) or 1500)
+        ms = self.session.limits.verify_ms if stockfish_ms is None else stockfish_ms
+        level = native_player_rating(self.analysis, self.side) or 1500
         ratings = sorted(set(clip_elo(level+step) for step in (0,200,400,600))) if maia_elos is None else maia_elos
-        root = self.engines.sf(history, ms, multipv=1, root_moves=[candidate], pv_plies=max_plies)
+        root = self.session.sf(history, ms, multipv=1, root_moves=[candidate], pv_plies=max_plies)
         continuation = root['lines'][0]['pv_uci']
         after_candidate = history + [candidate]
-        if len(continuation) < 2 and not self.engines.board(after_candidate).is_game_over():
-            defense = self.engines.sf(after_candidate, ms, multipv=1, pv_plies=max_plies-1)['lines'][0]
+        if len(continuation) < 2 and not self.session.board(after_candidate).is_game_over():
+            defense = self.session.sf(after_candidate, ms, multipv=1, pv_plies=max_plies-1)['lines'][0]
             continuation = [candidate] + defense['pv_uci']
         branch = (line or []) + continuation[:2]
         after_history = history_at(self.analysis, ply, branch)
-        after = self.engines.board(after_history)
+        after = self.session.board(after_history)
         human = self.maia_compare(ply, ratings, branch) if not after.is_game_over() else None
         baseline = self.rows.get(tuple(history))
         if baseline:

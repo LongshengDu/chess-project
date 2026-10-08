@@ -4,8 +4,8 @@ from __future__ import annotations
 import math
 import chess
 
-from analysis.lichess_accuracy import judgment
-from analysis.player_rating.scale import native_player_rating
+from analysis.accuracy.lichess import judgment
+from analysis.maia_context import native_player_rating
 
 LABELS = (
     'inaccuracy', 'mistake', 'blunder', 'missed_win', 'winning_to_losing',
@@ -174,11 +174,12 @@ def move_flags(row, level, *, previous=None, reply=None, all_moves=None):
         low = sum(curve[str(r)] for r in (1000, 1100, 1200))/3
         high = sum(curve[str(r)] for r in (2400, 2500, 2600))/3
         if high >= .50 and high >= low+.20 and all(
-                row['maia'][str(r)] and row['maia'][str(r)][0]['move'] == c['move'] for r in (2400, 2500, 2600)):
+                row['maia'][str(r)]['moves'] and row['maia'][str(r)]['moves'][0]['move'] == c['move']
+                for r in (2400, 2500, 2600)):
             blocks = [sum(curve[str(r)] for r in range(start, start+300, 100))/3 for start in (1000, 1400, 1800, 2200)]
             if all(b >= a-.03 for a, b in zip(blocks, blocks[1:])):
                 flags.add('stronger_maia_converges')
-        if sum(curve[str(r)] >= .50 and row['maia'][str(r)][0]['move'] == c['move']
+        if sum(curve[str(r)] >= .50 and row['maia'][str(r)]['moves'][0]['move'] == c['move']
                for r in range(1000, 2601, 100)) >= 14:
             flags.add('human_consensus')
     # Strong preference requires all roots, and must name the actual engine best,
@@ -205,8 +206,7 @@ def add_flags(analysis, all_scores):
     """Called only by analyze_game, while the complete legal-root scores exist."""
     rows = analysis['moves']
     for index, row in enumerate(rows):
-        level = (native_player_rating(analysis, row['side'])
-                 or native_player_rating(analysis, row['side'], fitted=True) or 1500)
+        level = (native_player_rating(analysis, row['side']) or 1500)
         row['flags'] = move_flags(row, level, previous=rows[index-1] if index else None,
             reply=rows[index+1] if index+1 < len(rows) else None,
             all_moves=all_scores.get(row['ply']) if all_scores else None)

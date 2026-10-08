@@ -8,11 +8,15 @@ import uuid
 import chess
 from flask import Blueprint, Response, abort, current_app, request, stream_with_context
 
-from analysis.stockfish_exploration import explore, validate_exploration_seconds
+from analysis.stockfish_exploration import (continuation_result, exploration_board,
+                                           search_lines, validate_exploration_seconds)
 from analysis.game.study import PgnAnalysisApi
 from analysis.stockfish_search import BOUNDED_POLICY_VERSION, SearchControl
+from analysis.cache.requests import stockfish_exploration_request
+from analysis.cache.policy import promote_request
 from backend.settings import CONFIG
 from engine.stockfish import StockfishScorer
+from engine.uci import seconds_to_milliseconds
 
 
 class AnalysisRoutes:
@@ -45,7 +49,7 @@ class AnalysisRoutes:
         data = request.get_json()
         if not isinstance(data, dict):
             raise ValueError('Expected exploration options')
-        board = self.platform.board(data.get('fen'))
+        board = self.platform.history_board(data.get('fen'), data.get('start_fen'), data.get('moves'))
         config = CONFIG['ANALYSIS']['STOCKFISH_EXPLORATION']
         seconds = data.get('seconds', config['DEFAULT_SEARCH_SECONDS'])
         depth = data.get('depth', config['MAX_DEPTH'])
@@ -55,8 +59,28 @@ class AnalysisRoutes:
         move = data.get('move')
         if move is not None and (not isinstance(move, str) or move not in {m.uci() for m in board.legal_moves}):
             raise ValueError('Exploration move must be legal')
-        with self.platform.search_engine() as engine:
-            return explore(engine, board, move=move, seconds=seconds, depth=depth)
+        root = exploration_board(board, move)
+        milliseconds = seconds_to_milliseconds(seconds)
+        cache_request = stockfish_exploration_request(self.platform.stockfish_signature,
+                                                       milliseconds, depth, 1, None)
+        persistent = self.platform.persistent_cache_enabled
+        cached = self.platform.cache.select_record(root, 'stockfish', cache_request) if persistent else None
+        raw = cached['result'] if cached else None
+        if cached is not None:
+            cache_request = cached['request']
+        if raw is None:
+            if persistent:
+                cache_request = promote_request(self.platform.cache.records(root, 'stockfish'), cache_request)
+            milliseconds, depth = cache_request['movetime_ms'], cache_request['depth']
+            if root.is_game_over(claim_draw=False):
+                raw = {'lines': []}
+            else:
+                with self.platform.search_engine() as engine:
+                    raw = search_lines(engine, root, seconds=milliseconds / 1000, depth=depth)
+            if persistent:
+                self.platform.cache.put(root, 'stockfish', cache_request, raw)
+        return continuation_result(board, raw, move=move,
+                                   seconds=cache_request['movetime_ms'] / 1000, depth=cache_request['depth'])
 
     def config(self):
         platform = self.platform
@@ -162,12 +186,16 @@ class AnalysisRoutes:
             if evaluation.get('strategy') == 'bounded' or 'max_budget_seconds' in evaluation:
                 depth = evaluation.get('target_depth', evaluation.get('depth'))
                 try:
-                    limits = self.platform.analysis_limits(depth)
-                    valid = (evaluation.get('max_budget_seconds', limits.max_ms / 1000) == limits.max_ms / 1000
-                             and (evaluation.get('strategy') != 'bounded' or (
-                                 evaluation.get('budget_seconds') == limits.verify_ms / 1000
-                                 and evaluation.get('policy_version') == BOUNDED_POLICY_VERSION)))
-                except ValueError:
+                    # The browser checks its selected preset. Preserve complete
+                    # observations here even when another preset is the default.
+                    valid = (type(depth) is int and depth > 0
+                             and evaluation.get('strategy') == self.platform.strategy
+                             and evaluation.get('complete') is True
+                             and evaluation.get('coverage_complete') is True
+                             and evaluation.get('budget_seconds', 0) > 0
+                             and (evaluation.get('strategy') != 'bounded' or
+                                  evaluation.get('policy_version') == BOUNDED_POLICY_VERSION))
+                except (ValueError, TypeError):
                     valid = False
                 if not valid:
                     position.pop('stockfish', None)
@@ -201,7 +229,7 @@ class AnalysisRoutes:
         data = request.get_json()
         if not isinstance(data, dict):
             raise ValueError('Expected a JSON object')
-        board = self.platform.board(data.get('fen'))
+        board = self.platform.history_board(data.get('fen'), data.get('start_fen'), data.get('moves'))
         limits = self.platform.analysis_limits(data.get('depth'), data.get('seconds'))
         options = data.get('options', {})
         if not isinstance(options, dict):

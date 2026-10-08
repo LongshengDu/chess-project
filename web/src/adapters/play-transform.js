@@ -65,7 +65,25 @@ export function transformPlaySource(code, id, local) {
     return code;
   }
   if (id.endsWith('/components/Common/ExportGame.tsx')) {
-    patch("tree.setHeader('Site', 'https://maiachess.com/')", "tree.setHeader('Site', window.location.origin)");
+    code = "import { PlayControllerContext } from 'src/contexts/PlayControllerContext'\n"+code;
+    patch('  const controller = useContext(TreeControllerContext)',
+      '  const controller = useContext(TreeControllerContext)\n  const playController = useContext(PlayControllerContext)');
+    patch("tree.setHeader('Site', 'https://maiachess.com/')",
+      `for (const key of ['Site', 'WhiteElo', 'BlackElo', 'TimeControl']) {
+      const value = gameTree.getHeader(key)
+      if (value !== undefined) tree.setHeader(key, value)
+    }
+    if (type === 'play') {
+      const rating = playController.maiaVersion.replace('maia_kdd_', '')
+      const [minutes, increment] = playController.timeControl.split('+').map(Number)
+      tree.setHeader('WhiteElo', rating)
+      tree.setHeader('BlackElo', rating)
+      tree.setHeader('Site', 'lichess.org')
+      tree.setHeader('TimeControl', playController.timeControl === 'unlimited' ? '300' : \`\${minutes * 60}+\${increment}\`)
+    } else if (!tree.getHeader('Site')) {
+      tree.setHeader('Site', window.location.origin)
+    }`);
+    patch('    game.id,', '    game.id,\n    playController.maiaVersion,\n    playController.timeControl,');
     return code;
   }
   if (id.endsWith('/components/Play/PlayControls.tsx')) {

@@ -7,8 +7,8 @@ from analysis.game.context import leadup_context
 from analysis.game.summary import compact_summary
 from analysis.game.history import history_at
 from analysis.move_hints import expected_score, probability
-from analysis.cache import write_json
-from analysis.player_rating.scale import native_player_rating
+from analysis.cache.storage import write_json
+from analysis.maia_context import native_player_rating
 
 
 def rounded(value):
@@ -23,11 +23,13 @@ def rounded(value):
 
 def baseline(row, actual_elo, include=()):
     """Reduce choices around actual_elo expressed on Maia's Lichess Blitz scale."""
-    available = sorted(map(int, row['maia']))
+    available = sorted(int(rating) for rating in row['maia'] if rating.isdigit())
     ratings = sorted({min(available, key=lambda r: abs(r-target))
                       for target in (actual_elo, actual_elo+200, actual_elo+400, actual_elo+600)})
-    maia = {str(r): row['maia'][str(r)][:3] for r in ratings}
-    roots = {row['played']['move'], *include} | {m['move'] for entries in maia.values() for m in entries}
+    maia = {str(r): {**row['maia'][str(r)], 'moves': row['maia'][str(r)]['moves'][:3]}
+            for r in ratings}
+    roots = {row['played']['move'], *include} | {
+        move['move'] for record in maia.values() for move in record['moves']}
     return {**{k: row[k] for k in ('ply', 'label', 'side', 'stage', 'position_eval', 'played')},
         'flags': row.get('flags', []),
         'maia': maia, 'candidate_moves': [{**{k: c[k] for k in ('move', 'san', 'eval', 'loss')},
@@ -70,15 +72,14 @@ class ToolEvidence(dict):
 
 def prepare_initial_evidence(library):
     """Prepare bounded checked comparisons locally before the first model call."""
-    overview = compact_summary(library.analysis)
+    overview = compact_summary(library.analysis, library.side)
     evidence = []
     library.phase = 'initial'
     try:
         for moment in overview['critical_moments']:
             row = library.analysis['moves'][moment['ply']-1]
             side = row['side']
-            level = (native_player_rating(library.analysis, side)
-                     or native_player_rating(library.analysis, side, fitted=True) or 1500)
+            level = native_player_rating(library.analysis, side) or 1500
             alternatives = [c for c in row['candidate_moves'] if c['move'] != row['played']['move']]
             if alternatives:
                 # Choose a plausible human comparison, not a preordained
@@ -99,7 +100,7 @@ def prepare_initial_evidence(library):
         library.phase = 'followup'
     # Share preceding moves and snapshots across overlapping moments. These
     # are read-only game facts, not additional model/engine investigations.
-    context = leadup_context(library.analysis, [m['ply'] for m in overview['critical_moments']] or [1])
+    context = leadup_context(library.analysis, [m['ply'] for m in overview['critical_moments']] or [1], side=library.side)
     package = ToolEvidence(**overview, leadup_context=context, initial_evidence=evidence)
     write_json(library.directory / 'initial_evidence.json', package)
     return str(package)

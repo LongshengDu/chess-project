@@ -1,7 +1,7 @@
 """Chess evaluation units, material stages, and rating metadata helpers."""
 import chess
 
-RATINGS = tuple(range(1000, 2601, 100))
+RATINGS = tuple(range(600, 2601, 100))
 PIECE_VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
                 chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
 

@@ -13,13 +13,15 @@ from xml.etree import ElementTree
 import chess
 import chess.pgn
 
+from analysis.accuracy.figures import DEFAULT_FIGURE_NAMES
+from analysis.cache.requests import stockfish_request_metadata
 from analysis.game.pipeline import analyze_game
 from analysis.profiler.runtime import RuntimeProfiler
 from analysis.stockfish_search import BOUNDED_POLICY_VERSION
 from backend.app import create_app
 from backend.analysis_positions import PlatformAnalysis
 from backend.settings import CONFIG as BACKEND_CONFIG
-from tests.coach.fixtures import FakeEngines
+from tests.coach.fixtures import FakeAnalysisSession
 
 
 class FullGameAnalysisTests(unittest.TestCase):
@@ -30,6 +32,7 @@ class FullGameAnalysisTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.enterContext(patch.dict(BACKEND_CONFIG['ANALYSIS'], CACHE_DIR=self.root/'evidence'))
         self.enterContext(patch.dict(BACKEND_CONFIG['SERVER']['STORAGE'], OUTPUT_DIR=self.root/'output'))
         self.platform = PlatformAnalysis(Mock(), Mock(), self.root / 'games.sqlite3')
         self.client = create_app(self.platform, self.root).test_client()
@@ -38,32 +41,32 @@ class FullGameAnalysisTests(unittest.TestCase):
         self.url = f'/api/platform/games/{self.game_id}'
 
     def fixture(self):
-        return {'schema_version': 4, 'played_elo': {'white': {'estimate': 1400}},
+        return {'schema_version': 5, 'accuracy_curve': {'ratings': [600, 2600]},
                 'positions': [{'fen': chess.STARTING_FEN, 'maia': {}, 'stockfish': {'cp_vec': {}}}],
                 'moves': [], 'performance': {'method': 'lichess'}}
 
     def events(self, response):
         return [json.loads(line) for line in response.get_data(as_text=True).splitlines()]
 
-    def test_web_and_direct_pipeline_have_the_same_ratings_moves_and_performance(self):
-        class CompleteEngines(FakeEngines):
+    def test_web_and_direct_pipeline_have_the_same_accuracy_moves_and_performance(self):
+        class CompleteAnalysisSession(FakeAnalysisSession):
             def initial_analysis(engine, *args):
                 result = super().initial_analysis(*args)
                 result['search'].update(target_depth=18, budget_seconds=10., max_budget_seconds=30.,
                                         policy_version=BOUNDED_POLICY_VERSION)
                 return result
-        direct_engines, web_engines = CompleteEngines(), CompleteEngines()
+        direct_engines, web_session = CompleteAnalysisSession(), CompleteAnalysisSession()
         self.addCleanup(direct_engines._temp.cleanup)
-        self.addCleanup(web_engines._temp.cleanup)
+        self.addCleanup(web_session._temp.cleanup)
         expected = analyze_game(chess.pgn.read_game(io.StringIO(self.pgn)), direct_engines,
-                                'white', 1400, progress=lambda _: None)
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(web_engines)) as borrowed:
+                                progress=lambda _: None)
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(web_session)) as borrowed:
             response = self.client.post(self.url + '/analyze', json={'run_id': 'same-pipeline', 'target_depth': 18})
             events = self.events(response)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(events[-1]['type'], 'complete', events[-1])
         result = events[-1]['analysis']
-        for field in ('moves', 'played_elo', 'performance', 'rating_fit', 'played_elo_method'):
+        for field in ('moves', 'accuracy_curve', 'performance'):
             self.assertEqual(result[field], expected[field], field)
         self.assertEqual(len(result['positions']), 5)
         self.assertEqual(sorted(event['index'] for event in events if event['type'] == 'position'), list(range(5)))
@@ -74,111 +77,186 @@ class FullGameAnalysisTests(unittest.TestCase):
         self.assertEqual((limits.depth, limits.verify_ms, limits.max_ms), (18, 10000, 30000))
         reopened = PlatformAnalysis(Mock(), Mock(), self.root / 'games.sqlite3')
         cached = create_app(reopened, self.root).test_client().get(self.url + '/analysis').json
-        self.assertEqual(cached['analysis'], result)
+        self.assertEqual(cached['analysis'], {key: value for key, value in result.items() if key != 'positions'})
         self.assertEqual(cached['positions'], result['positions'])
-        output = self.platform.repository.rating_output_directory(self.game_id)
-        self.assertEqual(output, self.root/'output'/f'{self.game_id}-full'/'player-rating')
-        for stem in ('analysis', 'prior'):
-            self.assertEqual(ElementTree.parse(output/f'{stem}.svg').getroot().tag,
+        output = self.platform.repository.accuracy_output_directory(self.game_id)
+        self.assertEqual(output, self.root/'output'/f'{self.game_id}-full')
+        for name in DEFAULT_FIGURE_NAMES:
+            self.assertEqual(ElementTree.parse(output/name).getroot().tag,
                              '{http://www.w3.org/2000/svg}svg')
-        self.assertEqual(json.loads((output/'fit.json').read_text(encoding='utf-8'))['rating_fit'], result['rating_fit'])
+        self.assertEqual({path.name for path in output.iterdir()},
+                         set(DEFAULT_FIGURE_NAMES))
 
     def render_fixture(self, result, directory):
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        for name in ('fit.json', 'analysis.svg', 'prior.svg', 'method-explanation.svg'):
+        for name in DEFAULT_FIGURE_NAMES:
             (directory/name).write_text('new ' + name, encoding='utf-8')
 
-    def test_repeated_web_runs_replace_figures_and_remove_old_formats(self):
-        output = self.platform.repository.rating_output_directory(self.game_id)
+    def test_publication_derives_cached_request_metadata_without_rewriting_evidence(self):
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        original = analyze_game(chess.pgn.read_game(io.StringIO(self.pgn)), session, progress=lambda _: None)
+        original_json = json.dumps(original, sort_keys=True)
+        before = {path: path.read_bytes() for path in Path(session._temp.name).rglob('*.json')}
+        refs = [position['stockfish'] for position in original['position_references']]
+        records = session.cache.get_reference_records(refs)
+        self.assertNotIn('target_depth', original['positions'][0]['stockfish'])
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(session)), \
+                patch('backend.analysis_games.analyze_game', return_value=original), \
+                patch('backend.analysis_games.export_saved_figures', side_effect=self.render_fixture), \
+                patch.object(session.cache, 'get_reference_records', wraps=session.cache.get_reference_records) as read:
+            events = self.events(self.client.post(self.url+'/analyze', json={'run_id': 'cached-metadata'}))
+        self.assertEqual(events[-1]['type'], 'complete', events[-1])
+        read.assert_called_once_with(refs)
+        published = events[-1]['analysis']
+        for position, record in zip(published['positions'], records, strict=True):
+            for key, value in stockfish_request_metadata(record['request']).items():
+                self.assertEqual(position['stockfish'][key], value)
+        reopened = self.client.get(self.url+'/analysis').json
+        self.assertEqual(reopened['positions'], published['positions'])
+        self.assertIsNotNone(reopened['analysis'])
+        self.assertEqual(json.dumps(original, sort_keys=True), original_json)
+        self.assertEqual(before, {path: path.read_bytes() for path in Path(session._temp.name).rglob('*.json')})
+
+    def test_repeated_web_runs_replace_figures_and_preserve_local_notes(self):
+        output = self.platform.repository.accuracy_output_directory(self.game_id)
         output.mkdir(parents=True)
-        (output/'analysis.png').write_text('previous', encoding='utf-8')
-        (output/'posterior.svg').write_text('obsolete layout', encoding='utf-8')
         (output/'notes.txt').write_text('keep local notes', encoding='utf-8')
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        diagrams = output/'diagrams'
+        diagrams.mkdir()
+        (diagrams/'custom.svg').write_text('keep custom diagram', encoding='utf-8')
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', side_effect=lambda *_a, **_k: self.fixture()), \
              patch('backend.analysis_games.export_saved_figures', side_effect=self.render_fixture) as export:
-            for run_id in ('first-fit', 'same-cached-fit'):
+            for run_id in ('first-analysis', 'same-cached-analysis'):
                 events = self.events(self.client.post(self.url+'/analyze', json={'run_id': run_id}))
                 self.assertEqual(events[-1]['type'], 'complete', events[-1])
-                self.assertEqual((output/'analysis.svg').read_text(encoding='utf-8'), 'new analysis.svg')
-                self.assertEqual((output/'method-explanation.svg').read_text(encoding='utf-8'), 'new method-explanation.svg')
-                self.assertFalse((output/'analysis.png').exists())
-                (output/'analysis.svg').write_text('older renderer', encoding='utf-8')
+                for name in DEFAULT_FIGURE_NAMES:
+                    self.assertEqual((output/name).read_text(encoding='utf-8'), 'new ' + name)
+                    (output/name).write_text('older renderer', encoding='utf-8')
         self.assertEqual(export.call_count, 2)
-        self.assertFalse((output/'posterior.svg').exists())
         self.assertEqual((output/'notes.txt').read_text(encoding='utf-8'), 'keep local notes')
-        self.assertEqual(list((self.root/'output').glob('.rating-*')), [])
+        self.assertEqual({path.name for path in diagrams.iterdir()}, {'custom.svg'})
+        self.assertEqual((diagrams/'custom.svg').read_text(encoding='utf-8'), 'keep custom diagram')
+        self.assertEqual(list((self.root/'output').glob('.accuracy-*')), [])
 
     def test_cancellation_during_render_keeps_previous_figures_and_analysis(self):
         original = self.fixture()
         self.platform.repository.save_full_analysis(self.game_id, original)
-        output = self.platform.repository.rating_output_directory(self.game_id)
+        output = self.platform.repository.accuracy_output_directory(self.game_id)
         output.mkdir(parents=True)
-        (output/'analysis.svg').write_text('accepted figure', encoding='utf-8')
+        for name in DEFAULT_FIGURE_NAMES:
+            (output/name).write_text('accepted figure', encoding='utf-8')
         def cancel_render(*args):
             self.render_fixture(*args)
             self.assertTrue(self.platform.full_games.cancel(self.game_id, 'cancel-render'))
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', return_value=self.fixture()), \
              patch('backend.analysis_games.export_saved_figures', side_effect=cancel_render):
             events = self.events(self.client.post(self.url+'/analyze', json={'run_id': 'cancel-render'}))
         self.assertEqual(events[-1]['type'], 'cancelled')
-        self.assertEqual((output/'analysis.svg').read_text(encoding='utf-8'), 'accepted figure')
-        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id), original)
+        for name in DEFAULT_FIGURE_NAMES:
+            self.assertEqual((output/name).read_text(encoding='utf-8'), 'accepted figure')
+        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
 
     def test_deletion_during_render_does_not_publish_an_output_directory(self):
         def delete_during_render(*args):
             self.render_fixture(*args)
             self.platform.repository.delete(self.game_id)
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', return_value=self.fixture()), \
              patch('backend.analysis_games.export_saved_figures', side_effect=delete_during_render):
             events = self.events(self.client.post(self.url+'/analyze', json={'run_id': 'delete-render'}))
         self.assertEqual(events[-1]['type'], 'error')
         self.assertIn('deleted', events[-1]['message'])
-        self.assertFalse(self.platform.repository.rating_output_directory(self.game_id).parent.exists())
+        self.assertFalse(self.platform.repository.accuracy_output_directory(self.game_id).exists())
         self.assertEqual(list((self.root/'output').iterdir()), [])
 
     def test_failed_figure_publication_restores_previous_files_and_database(self):
         original = self.fixture()
         self.platform.repository.save_full_analysis(self.game_id, original)
-        output = self.platform.repository.rating_output_directory(self.game_id)
+        output = self.platform.repository.accuracy_output_directory(self.game_id)
         output.mkdir(parents=True)
-        for name in ('fit.json', 'analysis.svg', 'prior.svg', 'method-explanation.svg'):
+        for name in ('analysis.json', *DEFAULT_FIGURE_NAMES):
             (output/name).write_text('accepted ' + name, encoding='utf-8')
         staged = self.root/'staged'
         self.render_fixture(None, staged)
         replace = Path.replace
         def fail_new_svg(path, target):
-            if path == staged/'method-explanation.svg':
+            if path == staged/'accuracy-by-move-2000.svg':
                 raise OSError('Cannot publish figure')
             return replace(path, target)
         with patch.object(Path, 'replace', fail_new_svg), self.assertRaisesRegex(OSError, 'publish figure'):
-            self.platform.repository.save_full_analysis(self.game_id, {**original, 'new': True}, rating_figures=staged)
-        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id), original)
-        for name in ('fit.json', 'analysis.svg', 'prior.svg', 'method-explanation.svg'):
+            self.platform.repository.save_full_analysis(self.game_id, {**original, 'new': True}, accuracy_figures=staged)
+        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
+        for name in ('analysis.json', *DEFAULT_FIGURE_NAMES):
+            self.assertEqual((output/name).read_text(encoding='utf-8'), 'accepted ' + name)
+
+    def test_incomplete_figure_set_preserves_existing_output_and_database(self):
+        original = self.fixture()
+        self.platform.repository.save_full_analysis(self.game_id, original)
+        output = self.platform.repository.accuracy_output_directory(self.game_id)
+        output.mkdir(parents=True)
+        (output/'analysis.json').write_text('keep analysis', encoding='utf-8')
+        staged = self.root/'staged'
+        staged.mkdir()
+        (staged/'accuracy-curve.svg').write_text('incomplete figure set', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'All accuracy figures'):
+            self.platform.repository.save_full_analysis(self.game_id, {**original, 'new': True},
+                                                        accuracy_figures=staged)
+        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
+        self.assertEqual((output/'analysis.json').read_text(encoding='utf-8'), 'keep analysis')
+        self.assertEqual({path.name for path in output.iterdir()}, {'analysis.json'})
+
+    def test_database_failure_restores_all_figures(self):
+        original = self.fixture()
+        repository = self.platform.repository
+        repository.save_full_analysis(self.game_id, original)
+        output = repository.accuracy_output_directory(self.game_id)
+        output.mkdir(parents=True)
+        names = DEFAULT_FIGURE_NAMES
+        for name in names:
+            (output/name).write_text('accepted ' + name, encoding='utf-8')
+        staged = self.root/'staged'
+        self.render_fixture(None, staged)
+        connect = repository.connect
+        @contextmanager
+        def failed_transaction():
+            with connect() as db:
+                yield db
+                raise OSError('Cannot commit transaction')
+        with patch.object(repository, 'connect', failed_transaction), \
+             self.assertRaisesRegex(OSError, 'commit transaction'):
+            repository.save_full_analysis(self.game_id, {**original, 'new': True}, accuracy_figures=staged)
+        self.assertEqual(repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
+        for name in names:
             self.assertEqual((output/name).read_text(encoding='utf-8'), 'accepted ' + name)
 
     def test_failed_run_preserves_complete_saved_analysis(self):
         original = self.fixture()
         self.platform.repository.save_full_analysis(self.game_id, original)
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', side_effect=RuntimeError('engine unavailable')):
             events = self.events(self.client.post(self.url + '/analyze', json={'run_id': 'failed'}))
         self.assertEqual(events[-1], {'type': 'error', 'message': 'engine unavailable'})
-        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id), original)
+        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
         self.assertFalse(self.platform.full_games.runs)
 
     def test_cancelled_run_drains_worker_without_publishing(self):
         stopped = threading.Event()
-        def blocked(game, engines, *, cancel, **kwargs):
+        def blocked(game, session, *, cancel, **kwargs):
             try:
                 self.assertTrue(cancel.wait(timeout=5))
                 raise InterruptedError('cancelled')
             finally:
                 stopped.set()
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', side_effect=blocked):
             response = self.client.post(self.url + '/analyze', json={'run_id': 'cancel-me'}, buffered=False)
             self.assertEqual(self.client.post(self.url + '/analyze/cancel', json={'run_id': 'cancel-me'}).json,
@@ -197,10 +275,10 @@ class FullGameAnalysisTests(unittest.TestCase):
                 yield Mock()
             finally:
                 closed.set()
-        def blocked(game, engines, *, cancel, **kwargs):
+        def blocked(game, session, *, cancel, **kwargs):
             self.assertTrue(cancel.wait(timeout=5))
             raise InterruptedError('disconnected')
-        with patch('backend.analysis_games.Engines.borrowed', borrowed), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', borrowed), \
              patch('backend.analysis_games.analyze_game', side_effect=blocked):
             response = self.client.post(self.url + '/analyze', json={'run_id': 'disconnect'}, buffered=False)
             response.close()
@@ -212,7 +290,7 @@ class FullGameAnalysisTests(unittest.TestCase):
         def deleted(*args, **kwargs):
             self.platform.repository.delete(self.game_id)
             return self.fixture()
-        with patch('backend.analysis_games.Engines.borrowed', return_value=nullcontext(Mock())), \
+        with patch('backend.analysis_games.AnalysisSession.borrowed', return_value=nullcontext(Mock())), \
              patch('backend.analysis_games.analyze_game', side_effect=deleted):
             events = self.events(self.client.post(self.url + '/analyze', json={'run_id': 'deleted'}))
         self.assertEqual(events[-1]['type'], 'error')
@@ -237,12 +315,26 @@ class FullGameAnalysisTests(unittest.TestCase):
         original = self.fixture()
         self.platform.repository.save_full_analysis(self.game_id, original)
         with self.assertRaises(KeyError):
-            self.platform.repository.save_full_analysis(self.game_id, {'played_elo': {}})
-        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id), original)
+            self.platform.repository.save_full_analysis(self.game_id, {'accuracy_curve': {}})
+        self.assertEqual(self.platform.repository.load_full_analysis(self.game_id),
+                         {key: value for key, value in original.items() if key != 'positions'})
         self.assertEqual(self.platform.repository.load_analysis(self.game_id), original['positions'])
         self.platform.repository.delete(self.game_id)
         self.assertIsNone(self.platform.repository.load_full_analysis(self.game_id))
         self.assertFalse(self.platform.repository.save_full_analysis(self.game_id, original))
+
+    def test_database_stores_raw_positions_once_and_autosave_preserves_full_analysis(self):
+        original = self.fixture()
+        repository = self.platform.repository
+        repository.save_full_analysis(self.game_id, original)
+        with repository.connect() as db:
+            stored = json.loads(db.execute('SELECT data FROM full_analyses WHERE id=?', (self.game_id,)).fetchone()[0])
+        self.assertNotIn('positions', stored)
+        self.assertEqual(repository.load_full_analysis(self.game_id), stored)
+        self.assertEqual(repository.load_analysis(self.game_id), original['positions'])
+        # Later UI autosaves do not relabel the completed analysis with new raw evidence.
+        repository.save_analysis(self.game_id, [{'ply': 0, 'maia': {}}])
+        self.assertEqual(repository.load_full_analysis(self.game_id), stored)
 
     def test_terminal_zero_depth_survives_interactive_autosave(self):
         terminal = {'ply': 4, 'fen': chess.STARTING_FEN, 'maia': {}, 'stockfish': {

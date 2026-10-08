@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 import time
 import uuid
 
+from analysis.accuracy.figures import DEFAULT_FIGURE_NAMES
 from backend.settings import CONFIG
 
 
@@ -116,22 +117,23 @@ class GameRepository:
             row = db.execute('SELECT data FROM analyses WHERE id=?', (game_id,)).fetchone()
         return json.loads(row['data']) if row else []
 
-    def rating_output_directory(self, game_id):
+    def accuracy_output_directory(self, game_id):
         """Stable user-output destination, independent of the analysis cache."""
         if not isinstance(game_id, str) or len(game_id) != 32 or any(c not in '0123456789abcdef' for c in game_id):
-            raise ValueError('Invalid saved game identifier for rating output.')
-        return self.output_directory / f'{game_id}-full' / 'player-rating'
+            raise ValueError('Invalid saved game identifier for accuracy output.')
+        return self.output_directory / f'{game_id}-full'
 
     @contextmanager
-    def _publish_rating_figures(self, game_id, source):
+    def _publish_accuracy_figures(self, game_id, source):
         """Replace only owned artifacts; restore them if publication fails."""
-        from analysis.player_rating.figures import LEGACY_IMAGES
-        names = ('fit.json', 'analysis.svg', 'prior.svg', 'method-explanation.svg', *LEGACY_IMAGES)
-        output = self.rating_output_directory(game_id)
+        names = DEFAULT_FIGURE_NAMES
+        if any(not (source / name).is_file() for name in names):
+            raise ValueError('All accuracy figures must be staged before publication.')
+        output = self.accuracy_output_directory(game_id)
         existed = output.exists()
         output.mkdir(parents=True, exist_ok=True)
         moved, installed = [], []
-        with TemporaryDirectory(prefix='.previous-rating-', dir=source.parent) as previous:
+        with TemporaryDirectory(prefix='.previous-accuracy-', dir=source.parent) as previous:
             backup = Path(previous)
             try:
                 for name in names:
@@ -140,23 +142,21 @@ class GameRepository:
                         target.replace(backup / name)
                         moved.append(name)
                     replacement = source / name
-                    if replacement.is_file():
-                        replacement.replace(target)
-                        installed.append(name)
+                    replacement.replace(target)
+                    installed.append(name)
                 yield
             except BaseException:
                 for name in installed:
                     (output / name).unlink(missing_ok=True)
                 for name in moved:
+                    (output / name).parent.mkdir(parents=True, exist_ok=True)
                     (backup / name).replace(output / name)
                 if not existed and not any(output.iterdir()):
                     output.rmdir()
-                    if not any(output.parent.iterdir()):
-                        output.parent.rmdir()
                 raise
 
-    def save_full_analysis(self, game_id, analysis, *, rating_figures=None):
-        """Publish evidence, UI positions and optional staged rating figures.
+    def save_full_analysis(self, game_id, analysis, *, accuracy_figures=None):
+        """Publish evidence, UI positions and optional staged accuracy figures.
 
         Rendering happens before this transaction. The write transaction orders
         publication against deletion; file backups survive until its commit.
@@ -165,19 +165,22 @@ class GameRepository:
             with self.connect() as db:
                 result = db.execute('INSERT OR REPLACE INTO full_analyses(id,data) '
                                     'SELECT id,? FROM games WHERE id=?',
-                                    (json.dumps(analysis, allow_nan=False), game_id))
+                                    (json.dumps({key: value for key, value in analysis.items()
+                                                 if key != 'positions'}, allow_nan=False), game_id))
                 if result.rowcount != 1:
                     return False
                 db.execute('INSERT OR REPLACE INTO analyses(id,data) VALUES(?,?)',
                            (game_id, json.dumps(analysis['positions'], allow_nan=False)))
-                if rating_figures is not None:
-                    artifacts.enter_context(self._publish_rating_figures(game_id, Path(rating_figures)))
+                if accuracy_figures is not None:
+                    artifacts.enter_context(self._publish_accuracy_figures(game_id, Path(accuracy_figures)))
         return True
 
     def load_full_analysis(self, game_id):
         with self.connect() as db:
             row = db.execute('SELECT data FROM full_analyses WHERE id=?', (game_id,)).fetchone()
-        return json.loads(row['data']) if row else None
+        if row is None:
+            return None
+        return json.loads(row['data'])
 
     def get_play(self, game_id):
         with self.connect() as db:

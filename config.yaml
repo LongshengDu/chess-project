@@ -43,7 +43,7 @@ ANALYSIS:
   STOCKFISH_SEARCH_STRATEGY: bounded
   # Shared limits for full-game analysis, position/candidate scoring, and coach tools.
   STOCKFISH_EVALUATION:
-    MAX_DEPTH: 28
+    MAX_DEPTH: 24
     DEFAULT_SEARCH_SECONDS: 10.0  # Per search, or shared across a position's bounded analysis phases
     MAX_SEARCH_SECONDS: 30.0  # Largest requested search budget; not a whole-game timeout
   # Fast principal-variation previews after a candidate move in the web analysis.
@@ -51,8 +51,6 @@ ANALYSIS:
     MAX_DEPTH: 18
     DEFAULT_SEARCH_SECONDS: 2.0  # Normal limit for ONE exploration search
     MAX_SEARCH_SECONDS: 10.0  # Ceiling for a longer requested search
-  PLAYER_RATING:
-    METHOD: shared_curve_affine  # analysis/player_rating/<METHOD>.py; current-game evidence only; no population asset
   PROFILER_DIR: null  # Optional browser profiler output directory
 
 COACH:
@@ -60,7 +58,7 @@ COACH:
     MODEL: gpt-6.1-sol
     BINARY: null  # SDK's pinned runtime
     REASONING_EFFORT: high
-  MAX_MODEL_RESPONSES: 24  # Chess-tool allowance defaults to four times this
+  MAX_MODEL_RESPONSES: 24  # Chess-tool allowance defaults to 4 times this
   # Fallback accounting when Codex does not report usage; this does not cap output length.
   OUTPUT_TOKEN_ESTIMATE: 12800
   TOTAL_TOKEN_BUDGET: 640000  # Cumulative input + output, including fallback estimates

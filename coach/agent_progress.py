@@ -89,6 +89,11 @@ class CoachProgress:
 
 
 def tool_activity(name, arguments, analysis):
+    if name == 'compare_position_difficulty':
+        ratings = arguments.get('ratings') or [1600]
+        return 'Comparing White and Black position difficulty at Maia ' + '/'.join(map(str, ratings)) + '.'
+    if name == 'get_accuracy_by_move':
+        return f"Reviewing saved position accuracies at Maia {arguments.get('maia_elo', 1600)}."
     ply = arguments.get('ply')
     label = f'ply {ply}' if type(ply) is int else 'the position'
     if type(ply) is int and 1 <= ply <= len(analysis['moves']):
@@ -105,6 +110,10 @@ def tool_activity(name, arguments, analysis):
 
 
 def tool_summary(name, result):
+    if name == 'compare_position_difficulty':
+        return 'Compared saved position expectations for both sides at the same Maia ratings.'
+    if name == 'get_accuracy_by_move':
+        return f"Retrieved {result['returned']} of {result['positions_available']} non-forced positions."
     if name in ('compare_played_vs_candidate', 'explore_candidate'):
         branches = [result['played'], result['candidate']] if name == 'compare_played_vs_candidate' else [result]
         ratings = sorted({int(r) for branch in branches for r in (branch.get('maia_after_defense') or {})})

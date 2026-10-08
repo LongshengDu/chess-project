@@ -20,6 +20,20 @@ def tool_specs(tools):
              'inputSchema': t.input_schema} for t in tools]
 
 
+def public_error_message(message):
+    """Keep the actionable message when the protocol wraps it in JSON."""
+    try:
+        envelope = json.loads(message)
+    except (TypeError, ValueError):
+        envelope = None
+    if isinstance(envelope, dict):
+        detail = envelope.get('error', envelope)
+        message = detail.get('message') if isinstance(detail, dict) else None
+        if not isinstance(message, str):
+            message = 'Codex returned an error without a public message.'
+    return ' '.join(message.split())[:1000]
+
+
 class CodexChessSession:
     def __init__(self, library, budget, *, allow_tools=True):
         self.library, self.budget = library, budget
@@ -103,7 +117,7 @@ def run_codex(library, gate, budget, instructions, task, *, model_id=None, allow
                 requests_before = budget.requests
                 active_request = True
                 turn = thread.turn(prompt, effort=CONFIG['COACH']['CODEX']['REASONING_EFFORT'])
-                answer, status = '', None
+                answer, status, turn_error = '', None, None
                 for event in turn.stream():
                     payload = event.payload
                     if event.method == 'thread/tokenUsage/updated':
@@ -124,8 +138,13 @@ def run_codex(library, gate, budget, instructions, task, *, model_id=None, allow
                                 answer = item.text
                         elif getattr(item, 'type', None) in ('commandExecution', 'fileChange', 'webSearch', 'collabToolCall'):
                             session.stop_reason = 'Codex attempted a tool outside the chess interface.'
+                    elif event.method == 'error':
+                        # Public protocol diagnostics, never reasoning or raw provider bodies.
+                        turn_error = payload.error.message
                     elif event.method == 'turn/completed':
                         status = getattr(payload.turn.status, 'value', payload.turn.status)
+                        if getattr(payload.turn, 'error', None) is not None:
+                            turn_error = payload.turn.error.message
                     if session.stop_reason:
                         turn.interrupt()
                         raise CoachingLimitError(session.stop_reason)
@@ -135,7 +154,8 @@ def run_codex(library, gate, budget, instructions, task, *, model_id=None, allow
                         turn.interrupt()
                         raise
                 if status != 'completed':
-                    raise CoachingLimitError('Codex did not complete the report. Saved evidence remains available; no automatic restart.')
+                    detail = public_error_message(turn_error) if turn_error else 'No failure detail was supplied.'
+                    raise CoachingLimitError(f'Codex report turn {status or "ended without completion"}: {detail} Saved evidence remains available; no automatic restart.')
                 active_request = False
                 if budget.requests == requests_before:
                     budget.requests += 1

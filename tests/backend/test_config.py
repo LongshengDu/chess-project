@@ -58,8 +58,7 @@ class ConfigTests(unittest.TestCase):
         for key in ('STOCKFISH_WORKERS','STOCKFISH_THREADS_PER_WORKER','STOCKFISH_HASH_MB_PER_WORKER'):
             self.assertIsInstance(self.raw['ANALYSIS'][key], int)
             self.assertGreater(self.raw['ANALYSIS'][key], 0)
-        self.assertEqual(self.raw['ANALYSIS']['PLAYER_RATING']['METHOD'],'shared_curve_affine')
-        self.assertEqual(set(self.raw['ANALYSIS']['PLAYER_RATING']), {'METHOD'})
+        self.assertNotIn('PLAYER_RATING', self.raw['ANALYSIS'])
         exploration = self.raw['ANALYSIS']['STOCKFISH_EXPLORATION']
         self.assertEqual(set(exploration), {'MAX_DEPTH','DEFAULT_SEARCH_SECONDS','MAX_SEARCH_SECONDS'})
         self.assertGreater(exploration['DEFAULT_SEARCH_SECONDS'], 0)

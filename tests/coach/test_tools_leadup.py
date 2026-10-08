@@ -10,7 +10,8 @@ import chess
 import chess.pgn
 from coach.tools_chess import ChessTools
 from analysis.game.context import leadup_context, position_facts
-from tests.coach.fixtures import FakeEngines
+from analysis.game.metadata import game_metadata
+from tests.coach.fixtures import FakeAnalysisSession
 
 
 def analysis_for(pgn):
@@ -22,7 +23,8 @@ def analysis_for(pgn):
             'played':{'move':move.uci(),'eval':0.,'loss':0.}, 'flags':[]})
         board.push(move)
     return {'start_fen':game.board().fen(), 'moves':rows,
-            'selected_player':{'side':'black','actual_elo':1270}}
+            'game': game_metadata(dict(game.headers), actual_elo=1270, rating_scale='lb'),
+            'coaching': {}}
 
 
 class LeadupTests(unittest.TestCase):
@@ -30,7 +32,7 @@ class LeadupTests(unittest.TestCase):
         analysis = analysis_for('1. e4 e5 2. Qh5 Nc6 3. Qf5 h6 4. Bc4 d6 5. Qxf7# 1-0')
         original = json.dumps(analysis,sort_keys=True)
         with patch('analysis.move_hints.move_flags',side_effect=AssertionError('Never recalculate flags')):
-            context = leadup_context(analysis,[8,6,2])
+            context = leadup_context(analysis,[8,6,2], side='black')
         self.assertEqual([m['ply'] for m in context['moves']],list(range(1,8)))
         self.assertEqual(context['positions']['8']['fen'],analysis['moves'][7]['fen'])
         self.assertEqual(context['windows'][0]['to_ply_exclusive'],8)
@@ -46,18 +48,18 @@ class LeadupTests(unittest.TestCase):
 
     def test_empty_first_move_final_board_and_backward_paging(self):
         analysis = analysis_for('1. e4 e5 2. Qh5 Nc6 3. Qf5 h6 4. Bc4 d6 5. Qxf7# 1-0')
-        self.assertEqual(leadup_context(analysis,[1])['moves'],[])
-        final = leadup_context(analysis,[10],2)
+        self.assertEqual(leadup_context(analysis,[1], side='black')['moves'],[])
+        final = leadup_context(analysis,[10],2, side='black')
         self.assertEqual([m['ply'] for m in final['moves']],[8,9])
         self.assertTrue(chess.Board(final['positions']['10']['fen']).is_checkmate())
-        previous = leadup_context(analysis,[final['windows'][0]['from_ply']],2)
+        previous = leadup_context(analysis,[final['windows'][0]['from_ply']],2, side='black')
         self.assertEqual([m['ply'] for m in previous['moves']],[6,7])
         for ply,count in [(0,8),(11,8),(True,8),(5,0),(5,17),(5,True)]:
-            with self.assertRaises(ValueError): leadup_context(analysis,[ply],count)
+            with self.assertRaises(ValueError): leadup_context(analysis,[ply],count, side='black')
 
     def test_castling_and_en_passant_replay_actual_legal_history(self):
         analysis = analysis_for('1. e4 a6 2. e5 d5 3. exd6 cxd6 4. Nf3 Nf6 5. Be2 e6 6. O-O *')
-        context = leadup_context(analysis,[12],16)
+        context = leadup_context(analysis,[12],16, side='black')
         castling = context['moves'][-1]['changes']['white']
         self.assertEqual(castling['king'],{'from':'e1','to':'g1'})
         self.assertEqual(castling['castling_rights']['removed'],['kingside','queenside'])
@@ -67,7 +69,7 @@ class LeadupTests(unittest.TestCase):
 
     def test_custom_start_and_promotion_do_not_assume_normal_start_position(self):
         analysis = analysis_for('[SetUp "1"]\n[FEN "7k/P7/8/8/8/8/8/7K w - - 0 1"]\n\n1. a8=Q+ *')
-        result = leadup_context(analysis,[2])
+        result = leadup_context(analysis,[2], side='black')
         self.assertEqual(result['positions']['1']['fen'],analysis['start_fen'])
         self.assertEqual(chess.Board(result['positions']['2']['fen']).piece_at(chess.A8),chess.Piece(chess.QUEEN,chess.WHITE))
 
@@ -81,16 +83,16 @@ class LeadupTests(unittest.TestCase):
 
     def test_decorated_tool_can_be_batched_and_does_not_search(self):
         analysis = analysis_for('1. e4 e5 2. Nf3 Nc6 *')
-        engines = FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
         with tempfile.TemporaryDirectory() as tmp:
-            library = ChessTools(analysis,engines,Path(tmp))
-            calls_before = len(engines.sf_calls),len(engines.human_calls)
+            library = ChessTools(analysis,session,Path(tmp), side='black')
+            calls_before = len(session.sf_calls),len(session.human_calls)
             result = library.call('investigate_batch',{'requests':[
                 {'tool':'get_leadup','arguments':{'ply':4,'lookback_plies':2}},
                 {'tool':'get_leadup','arguments':{'ply':2}}]})
             self.assertEqual([r['result']['windows'][0]['target_ply'] for r in result['results']],[4,2])
-            self.assertEqual((len(engines.sf_calls),len(engines.human_calls)),calls_before)
+            self.assertEqual((len(session.sf_calls),len(session.human_calls)),calls_before)
 
 
 if __name__ == '__main__':

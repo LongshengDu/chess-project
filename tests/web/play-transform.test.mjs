@@ -20,6 +20,77 @@ for (const path of paths) test(`upstream ${path} remains syntactically valid aft
   assert.deepEqual((compiled.diagnostics || []).filter(d=>d.category===ts.DiagnosticCategory.Error),[]);
 });
 
+function exportGameEffect() {
+  const filename = fileURLToPath(new URL('../../deps/maia-platform-frontend/src/components/Common/ExportGame.tsx',import.meta.url));
+  const transformed = transformPlaySource(readFileSync(filename,'utf8').replace(/\r\n/g,'\n'),filename.replaceAll('\\','/'),p=>p);
+  const source = ts.createSourceFile(filename,transformed,ts.ScriptTarget.Latest,true);
+  let callback;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect') callback = node.arguments[0].getText(source);
+    ts.forEachChild(node,visit);
+  }
+  visit(source);
+  assert.ok(callback);
+  return ts.transpileModule(`(${callback})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+}
+
+function exportSnapshot(effect, {type='play',timeControl='5+2',rating=1600,headers={},player='white'} = {}) {
+  let snapshot,fen;
+  class ExportTree {
+    constructor(rootFen) { this.rootFen = rootFen; this.headers = {}; }
+    setHeader(key,value) { this.headers[key] = value; }
+    getHeader(key) { return this.headers[key]; }
+    addMovesToMainLine(moves,times) { this.moves = moves; this.times = times; }
+    toPGN() { return this; }
+  }
+  const controller = {maiaVersion:`maia_kdd_${rating}`,timeControl,player};
+  vm.runInNewContext(effect,{
+    GameTree:ExportTree,gameTree:{getRoot:()=>({fen:'start-fen'}),getHeader:key=>headers[key],
+      toMoveArray:()=>['e2e4','e7e5'],toTimeArray:()=>[0,0]},
+    playController:controller,type,game:{id:'local-game',termination:{result:'1-0'}},
+    whitePlayer:player === 'white' ? 'You' : `Maia ${rating}`,
+    blackPlayer:player === 'black' ? 'You' : `Maia ${rating}`,event:'Play Maia',
+    window:{location:{origin:'http://127.0.0.1:5000'}},currentNode:{fen:'current-fen'},
+    setPgn:value=>{snapshot=value;},setFen:value=>{fen=value;},
+  })();
+  assert.equal(fen,'current-fen');
+  assert.deepEqual(snapshot.moves,['e2e4','e7e5']);
+  assert.deepEqual(snapshot.times,[0,0]);
+  assert.equal(snapshot.headers.Result,'1-0');
+  assert.equal(controller.timeControl,timeControl);
+  return snapshot.headers;
+}
+
+test('direct play PGN exports both selected ratings and the selected PGN time control',() => {
+  const effect = exportGameEffect();
+  for (const player of ['white','black']) {
+    for (const [timeControl,pgnTime] of [['3+0','180+0'],['5+2','300+2'],['0+1','0+1'],['60+30','3600+30'],['unlimited','300']]) {
+      const headers = exportSnapshot(effect,{player,timeControl,rating:1900});
+      assert.equal(headers.WhiteElo,'1900');
+      assert.equal(headers.BlackElo,'1900');
+      assert.equal(headers.Site,'lichess.org');
+      assert.equal(headers.TimeControl,pgnTime);
+      assert.equal(headers[player === 'white' ? 'White' : 'Black'],'You');
+    }
+  }
+});
+
+test('analysis PGN export preserves saved rating context instead of using play defaults',() => {
+  const effect = exportGameEffect();
+  for (const saved of [
+    {Site:'lichess.org',WhiteElo:'1900',BlackElo:'1900',TimeControl:'300'},
+    {Site:'Chess.com',WhiteElo:'1320',BlackElo:'1450',TimeControl:'600+5'},
+  ]) {
+    const headers = exportSnapshot(effect,{type:'analysis',headers:saved});
+    for (const [key,value] of Object.entries(saved)) assert.equal(headers[key],value);
+  }
+  const headers = exportSnapshot(effect,{type:'analysis'});
+  assert.equal(headers.Site,'http://127.0.0.1:5000');
+  assert.equal(headers.WhiteElo,undefined);
+  assert.equal(headers.BlackElo,undefined);
+  assert.equal(headers.TimeControl,undefined);
+});
+
 test('upstream clock starts after the second ply without epoch-sized move times',() => {
   const filename = fileURLToPath(new URL('../../deps/maia-platform-frontend/src/hooks/usePlayController/usePlayController.ts',import.meta.url));
   const transformed = transformPlaySource(readFileSync(filename,'utf8').replace(/\r\n/g,'\n'),filename.replaceAll('\\','/'),p=>p);

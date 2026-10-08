@@ -12,9 +12,9 @@ import chess.pgn
 from coach.tools_chess import ChessTools
 from analysis.game.pipeline import analyze_game
 from coach.coach import parser
-from analysis.engine_session import Engines, Limits
+from analysis.session import AnalysisSession, Limits
 from coach.settings import CONFIG
-from tests.coach.fixtures import FakeEngines
+from tests.coach.fixtures import FakeAnalysisSession
 from tests.analysis import test_stockfish_search as search_fixtures
 
 
@@ -24,12 +24,12 @@ class SharedAnalysisSettingsTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         # Both consumers read the same YAML; inject each consumer explicitly.
-        self.enterContext(patch.dict('analysis.engine_session.CONFIG', CONFIG))
+        self.enterContext(patch.dict('analysis.session.CONFIG', CONFIG))
 
     def test_fractional_seconds_keep_millisecond_precision_for_agent_tools(self):
         with patch.dict(CONFIG['ANALYSIS']['STOCKFISH_EVALUATION'],
                         DEFAULT_SEARCH_SECONDS=3.125, MAX_SEARCH_SECONDS=13.875):
-            args = parser().parse_args(['example.pgn','--side','white','--elo','1600'])
+            args = parser().parse_args(['example.pgn','--side','white','--elo','1600', '--rating-scale', 'lb'])
             limits = Limits()
             self.assertEqual((args.verify_ms,args.max_ms),(3125,13875))
             self.assertEqual((limits.verify_ms,limits.max_ms),(3125,13875))
@@ -42,16 +42,16 @@ class SharedAnalysisSettingsTests(unittest.TestCase):
              patch.dict(CONFIG['STOCKFISH'], START_TIMEOUT_SECONDS=7), \
              patch.dict(CONFIG['ANALYSIS'], STOCKFISH_SEARCH_STRATEGY='bounded'), \
              patch.dict(CONFIG['ANALYSIS']['STOCKFISH_EVALUATION'], MAX_DEPTH=22, DEFAULT_SEARCH_SECONDS=1.2, MAX_SEARCH_SECONDS=15.0):
-            args = parser().parse_args(['example.pgn', '--side', 'white', '--elo', '1600'])
-            engines = Engines(chess.STARTING_FEN, self.root)
-            self.assertEqual(engines.device, 'cpu')
+            args = parser().parse_args(['example.pgn', '--side', 'white', '--elo', '1600', '--rating-scale', 'lb'])
+            session = AnalysisSession(chess.STARTING_FEN, self.root)
+            self.assertEqual(session.engines.device, 'cpu')
             for field in ('verify_ms', 'max_ms', 'depth', 'analysis_strategy'):
-                self.assertEqual(getattr(engines.limits, field), getattr(args, field))
+                self.assertEqual(getattr(session.limits, field), getattr(args, field))
             self.assertEqual((args.verify_ms, args.max_ms, args.depth), (1200, 15000, 22))
             self.assertNotIn('--tactical-ms', parser().format_help())
             self.assertNotIn('--analysis-depth', parser().format_help())
             self.assertNotIn('--analysis-time-scale', parser().format_help())
-            args = parser().parse_args(['example.pgn', '--side', 'white', '--elo', '1600',
+            args = parser().parse_args(['example.pgn', '--side', 'white', '--elo', '1600', '--rating-scale', 'lb',
                 '--verify-ms', '900', '--max-ms', '14000', '--depth', '19', '--analysis-strategy', 'staged'])
             self.assertEqual((args.verify_ms, args.max_ms, args.depth, args.analysis_strategy),
                              (900, 14000, 19, 'staged'))
@@ -70,64 +70,49 @@ class SharedAnalysisSettingsTests(unittest.TestCase):
                     Limits(**options)
 
     def test_initial_analysis_uses_shared_strategies_and_separate_caches(self):
-        engines = Engines(chess.STARTING_FEN, self.root, limits=Limits(verify_ms=6000, depth=18))
-        engines.stockfish = search_fixtures.SearchTests().engine()
-        engines.signature = {'test': True}
-        self.addCleanup(engines.close)
+        session = AnalysisSession(chess.STARTING_FEN, self.root, limits=Limits(verify_ms=6000, depth=18))
+        session.engines.stockfish = search_fixtures.SearchTests().engine()
+        session.engines.signature = {'test': True}
+        self.addCleanup(session.close)
         saved = {}
         for strategy in ('bounded', 'staged', 'exhaustive'):
-            engines.limits = replace(engines.limits, analysis_strategy=strategy)
-            before = engines.stockfish.analysis.call_count
-            saved[strategy] = engines.initial_analysis([], 'e2e4', ['d2d4'])
+            session.limits = replace(session.limits, analysis_strategy=strategy)
+            before = session.engines.stockfish.analysis.call_count
+            saved[strategy] = session.initial_analysis([], 'e2e4', ['d2d4'])
             result = saved[strategy]
-            self.assertGreater(engines.stockfish.analysis.call_count, before)
+            self.assertGreater(session.engines.stockfish.analysis.call_count, before)
             self.assertEqual(result['search']['strategy'], strategy)
-            self.assertEqual(result['search']['budget_seconds'], 6. if strategy == 'bounded' else engines.limits.max_ms / 1000)
-            self.assertEqual(result['search']['max_budget_seconds'], engines.limits.max_ms / 1000)
+            self.assertEqual(result['search']['budget_seconds'], 6. if strategy == 'bounded' else session.limits.max_ms / 1000)
+            self.assertEqual(result['search']['max_budget_seconds'], result['search']['budget_seconds'])
             self.assertTrue(result['search']['coverage_complete'])
             self.assertEqual({row['uci'] for row in result['lines']}, {move.uci() for move in chess.Board().legal_moves})
             self.assertIn(result['best_move'], result['engine_moves'])
-            before = engines.stockfish.analysis.call_count
-            self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4']), result)
-            self.assertEqual(engines.stockfish.analysis.call_count, before)
-        engines.limits = replace(engines.limits, analysis_strategy='bounded')
-        before = engines.stockfish.analysis.call_count
-        self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4']), saved['bounded'])
-        self.assertEqual(engines.stockfish.analysis.call_count, before)
-        engines.limits = replace(engines.limits, verify_ms=7000)
-        self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4'])['search']['budget_seconds'], 7.)
-        self.assertGreater(engines.stockfish.analysis.call_count, before)
-        before = engines.stockfish.analysis.call_count
-        engines.limits = replace(engines.limits, max_ms=15000)
-        self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4'])['search']['max_budget_seconds'], 15.)
-        self.assertGreater(engines.stockfish.analysis.call_count, before)
-        before = engines.stockfish.analysis.call_count
-        engines.limits = replace(engines.limits, depth=15)
-        self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4'])['search']['target_depth'], 15)
-        self.assertGreater(engines.stockfish.analysis.call_count, before)
-
-    def test_legacy_scale_cache_is_not_reused_for_seconds_policy(self):
-        engines = Engines(chess.STARTING_FEN, self.root, limits=Limits(verify_ms=6000, depth=18))
-        engines.signature = {'test': True}
-        # Cache format and identity before configuration consolidation.
-        key = ['initial-analysis', 1, engines.signature, chess.STARTING_FEN, [], 18, 1.,
-               {'forcedCandidateMoves': ['e2e4'], 'maiaCandidateMoves': ['d2d4']}]
-        saved = {'search': {'strategy': 'bounded', 'budget_seconds': 6.}, 'lines': [{'uci': 'e2e4'}]}
-        engines.cache.put(key, saved)
-        engines.stockfish = search_fixtures.SearchTests().engine()
-        self.addCleanup(engines.close)
-        result = engines.initial_analysis([], 'e2e4', ['d2d4'])
-        self.assertNotEqual(result, saved)
-        self.assertTrue(result['search']['coverage_complete'])
-        self.assertGreater(engines.stockfish.analysis.call_count, 0)
+            before = session.engines.stockfish.analysis.call_count
+            self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4']), result)
+            self.assertEqual(session.engines.stockfish.analysis.call_count, before)
+        session.limits = replace(session.limits, analysis_strategy='bounded')
+        before = session.engines.stockfish.analysis.call_count
+        self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4']), saved['bounded'])
+        self.assertEqual(session.engines.stockfish.analysis.call_count, before)
+        session.limits = replace(session.limits, verify_ms=7000)
+        self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4'])['search']['budget_seconds'], 7.)
+        self.assertGreater(session.engines.stockfish.analysis.call_count, before)
+        before = session.engines.stockfish.analysis.call_count
+        session.limits = replace(session.limits, max_ms=15000)
+        self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4'])['search']['max_budget_seconds'], 7.)
+        self.assertEqual(session.engines.stockfish.analysis.call_count, before)
+        before = session.engines.stockfish.analysis.call_count
+        session.limits = replace(session.limits, depth=15)
+        self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4'])['search']['target_depth'], 18)
+        self.assertEqual(session.engines.stockfish.analysis.call_count, before)
 
     def test_tool_schema_exposes_the_effective_shared_search_limits(self):
-        engines = FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        engines.limits = replace(engines.limits, max_ms=12000, verify_ms=2000)
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        session.limits = replace(session.limits, max_ms=12000, verify_ms=2000)
         game = chess.pgn.read_game(io.StringIO('1. e4 *'))
-        analysis = analyze_game(game, engines, 'white', 1600, progress=lambda _: None)
-        tools = ChessTools(analysis, engines, self.root).tools
+        analysis = analyze_game(game, session, actual_elo=1600, progress=lambda _: None)
+        tools = ChessTools(analysis, session, self.root, side='white').tools
         tool = next(tool for tool in tools if tool.name == 'stockfish_analyze')
         argument = tool.input_schema['properties']['movetime_ms']
         self.assertEqual((argument['minimum'], argument['maximum']), (1, 12000))

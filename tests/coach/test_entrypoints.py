@@ -1,5 +1,6 @@
 """Offline checks: production defaults and the isolated small-report runner."""
 from coach.settings import CONFIG as COACH_CONFIG
+import io
 import json
 import subprocess
 import sys
@@ -10,8 +11,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import chess
+import chess.pgn
 
+from analysis.game.pipeline import analyze_game
 from coach.coach import codex_model, parser
+from tests.coach.fixtures import FakeAnalysisSession
 from tests.coach.smoke_test import main
 
 CONFIG = yaml.safe_load((Path(__file__).resolve().parents[2] / 'config.yaml').read_text(encoding='utf-8-sig'))
@@ -67,10 +71,10 @@ class EntrypointTests(unittest.TestCase):
         self.assertEqual(RunBudget().max_model_responses, 24)
         self.assertEqual(inspect.signature(run_coach).parameters['max_model_responses'].default, 24)
         with patch.dict(COACH_CONFIG['COACH']['CODEX'], MODEL='gpt-6-luna'):
-            args = parser().parse_args(['game.pgn', '--side', 'white', '--elo', '1400'])
+            args = parser().parse_args(['game.pgn', '--side', 'white', '--elo', '1400', '--rating-scale', 'lb'])
             self.assertEqual(codex_model(args), 'gpt-6-luna')
             self.assertEqual(args.max_model_responses, 24)
-            override = parser().parse_args(['game.pgn', '--side', 'white', '--elo', '1400', '--max-model-responses', '30'])
+            override = parser().parse_args(['game.pgn', '--side', 'white', '--elo', '1400', '--rating-scale', 'lb', '--max-model-responses', '30'])
             self.assertEqual(override.max_model_responses, 30)
         self.assertFalse(hasattr(args, 'smoke_test'))
         self.assertNotIn('--smoke-test', parser().format_help())
@@ -80,13 +84,16 @@ class EntrypointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'game' / 'analysis.json'
             source.parent.mkdir()
-            original = json.dumps({'start_fen': chess.STARTING_FEN, 'schema_version': 3})
+            seed_session = FakeAnalysisSession()
+            self.addCleanup(seed_session._temp.cleanup)
+            game = chess.pgn.read_game(io.StringIO('1. e4 e5 *'))
+            original = json.dumps(analyze_game(game, seed_session, actual_elo=1400, progress=lambda _: None))
             source.write_text(original, encoding='utf-8')
-            engines = Mock()
-            engines.__enter__ = Mock(return_value=engines)
-            engines.__exit__ = Mock(return_value=False)
+            session = Mock()
+            session.__enter__ = Mock(return_value=session)
+            session.__exit__ = Mock(return_value=False)
             def run(analysis, local, output, **kwargs):
-                self.assertEqual(local, engines)
+                self.assertEqual(local, session)
                 self.assertEqual(kwargs['model_id'], CONFIG['COACH']['CODEX']['MODEL'])
                 self.assertEqual(kwargs['max_model_responses'], 1)
                 self.assertFalse(kwargs['request'].allow_tools)
@@ -96,14 +103,15 @@ class EntrypointTests(unittest.TestCase):
                 self.assertNotEqual(output, source.parent)
                 self.assertTrue((output / 'analysis.json').is_file())
                 analysis['agent_run'] = {'usage': {'total_tokens': 0}}
-            with patch('tests.coach.smoke_test.Engines', return_value=engines), \
+            with patch('tests.coach.smoke_test.AnalysisSession', return_value=session), \
                  patch('tests.coach.smoke_scenario.run_coach', side_effect=run) as coach:
-                self.assertEqual(main([str(source), '--output-dir', str(Path(tmp)/'smoke')]), 0)
+                self.assertEqual(main([str(source), '--side', 'white', '--output-dir', str(Path(tmp)/'smoke'),
+                                       '--cache-dir', str(Path(tmp)/'cache')]), 0)
             coach.assert_called_once()
-            engines.__exit__.assert_called_once()
+            session.__exit__.assert_called_once()
             self.assertEqual(source.read_text(encoding='utf-8'), original)
-            with patch('tests.coach.smoke_test.Engines') as factory:
-                self.assertEqual(main([str(source), '--output-dir', str(source.parent)]), 1)
+            with patch('tests.coach.smoke_test.AnalysisSession') as factory:
+                self.assertEqual(main([str(source), '--side', 'white', '--output-dir', str(source.parent)]), 1)
                 factory.assert_not_called()
 
 

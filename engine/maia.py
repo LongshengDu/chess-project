@@ -11,9 +11,11 @@ import torch
 from maia3.dataset import get_legal_moves_mask, tokenize_board
 from maia3.uci import Maia3UCIEngine, parse_args
 from maia3.utils import mirror_move
+from maia3.model_registry import ModelResolutionError, resolve_checkpoint_path
 from torch.amp import autocast
 
 from engine.settings import CONFIG
+from engine.assets_identity import asset_identity
 
 
 class MaiaPolicy:
@@ -21,6 +23,16 @@ class MaiaPolicy:
 
     def __init__(self, model: str, cache_dir: Path, device: str | None = None,
                  *, checkpoint: str | Path | None = None) -> None:
+        config = self._configuration(model, cache_dir, device, checkpoint)
+        if config.device.startswith("cuda") and not torch.cuda.is_available():
+            raise ValueError("CUDA is unavailable. Install GPU support with uv sync --extra cuda, "
+                             "then launch with uv run --extra cuda; or use --device cpu.")
+        self._engine = Maia3UCIEngine(config)
+        self._inference_lock = threading.RLock()
+        self._prepared_cache = OrderedDict()
+
+    @staticmethod
+    def _configuration(model, cache_dir, device, checkpoint):
         device = CONFIG['MAIA']['DEVICE'] if device is None else device
         checkpoint = CONFIG['MAIA']['CHECKPOINT'] if checkpoint is None else checkpoint
         config = parse_args(
@@ -35,14 +47,29 @@ class MaiaPolicy:
                 str(CONFIG['MAIA']['PLAYER_RATING']),
             ] + (["--device", device] if device and device != "auto" else [])
         )
-        if config.device.startswith("cuda") and not torch.cuda.is_available():
-            raise ValueError("CUDA is unavailable. Install GPU support with uv sync --extra cuda, "
-                             "then launch with uv run --extra cuda; or use --device cpu.")
         if checkpoint is not None:
             config.checkpoint_path = str(checkpoint)
-        self._engine = Maia3UCIEngine(config)
-        self._inference_lock = threading.RLock()
-        self._prepared_cache = OrderedDict()
+        return config
+
+    @staticmethod
+    def _signature(config):
+        if config.checkpoint_path is None:
+            filename = config.checkpoint_filename or config.model_spec.checkpoint_filename
+            if not filename:
+                raise FileNotFoundError('A known local Maia checkpoint is required for cache identity.')
+            try:
+                config.checkpoint_path = resolve_checkpoint_path(
+                    config.model_spec, checkpoint_filename=filename, cache_dir=config.cache_dir,
+                    revision=config.revision, local_files_only=True, force_download=False)
+            except ModelResolutionError as exc:
+                raise FileNotFoundError('The configured Maia checkpoint is not available locally.') from exc
+        return {'maia': asset_identity(Path(config.checkpoint_path).resolve()),
+                'history_window': config.history, 'device': config.device}
+
+    @classmethod
+    def asset_signature(cls, model, cache_dir, device=None, *, checkpoint=None):
+        """Read local asset identity without constructing an engine or requiring CUDA."""
+        return cls._signature(cls._configuration(model, cache_dir, device, checkpoint))
 
     def load(self) -> None:
         """Eagerly load once when an application requires startup readiness."""
@@ -53,14 +80,7 @@ class MaiaPolicy:
     def model_signature(self):
         """Stable inference identity for shared analysis caches."""
         with self._inference_lock:
-            config = self._engine.cfg
-            if config.checkpoint_path is None:
-                # Maia resolves its official cached checkpoint during the first
-                # load. Reuse that shared model rather than guessing a filename.
-                self._engine.ensure_model_loaded()
-            checkpoint = Path(config.checkpoint_path).resolve()
-            return {'maia': [str(checkpoint), checkpoint.stat().st_mtime_ns],
-                    'history_window': config.history, 'device': config.device}
+            return self._signature(self._engine.cfg)
 
     @staticmethod
     def _history(board: chess.Board, length: int) -> deque:

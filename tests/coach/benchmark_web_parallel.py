@@ -17,7 +17,7 @@ from backend.analysis_positions import PlatformAnalysis
 from backend.settings import CONFIG as BACKEND_CONFIG
 from analysis.game.study import load_game
 from engine.uci import stockfish_executable
-from analysis.cache import write_json
+from analysis.cache.storage import write_json
 from engine.maia import MaiaPolicy
 from coach.settings import CONFIG
 from engine.stockfish import StockfishScorer

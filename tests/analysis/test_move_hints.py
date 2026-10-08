@@ -9,8 +9,9 @@ import chess.pgn
 from analysis.move_hints import LABELS, expected_score, move_flags, probability, sacrifice_hint
 from analysis.game.pipeline import analyze_game
 from analysis.game.summary import compact_summary
-from analysis.cache import write_json
-from tests.coach.fixtures import FakeEngines
+from analysis.cache.storage import write_json
+from analysis.accuracy.evidence import RATINGS
+from tests.coach.fixtures import FakeAnalysisSession
 
 
 def sacrifice_game():
@@ -24,15 +25,22 @@ def cp_for(score, side='white'):
     return value if side == 'white' else -value
 
 
+def ranking_for(candidates, rating):
+    return [{**{key: candidate[key] for key in ('move', 'san', 'eval', 'loss')},
+             'p': candidate['maia_p'][str(rating)]}
+            for candidate in sorted(candidates, key=lambda c: -c['maia_p'][str(rating)])[:5]]
+
+
 def row_for(before=.5, after=.5, fen=chess.STARTING_FEN, move='e2e4'):
     board = chess.Board(fen)
     side = 'white' if board.turn else 'black'
     candidates = [{'move': m.uci(), 'san': board.san(m), 'eval': cp_for(after if m.uci() == move else before, side),
-                   'loss': 0, 'maia_p': {str(r): 1/board.legal_moves.count() for r in range(1000, 2601, 100)}} for m in board.legal_moves]
+                   'loss': 0, 'maia_p': {str(r): 1/board.legal_moves.count() for r in RATINGS}} for m in board.legal_moves]
     played = next(c for c in candidates if c['move'] == move)
     return {'ply': 1, 'side': side, 'fen': fen, 'position_eval': cp_for(before, side),
             'played': {k: played[k] for k in ('move', 'san', 'eval', 'loss')}, 'candidate_moves': candidates,
-            'maia': {str(r): sorted(candidates, key=lambda c: -c['maia_p'][str(r)])[:5] for r in range(1000, 2601, 100)}}
+            'maia': {str(r): {'moves': ranking_for(candidates, r),
+                              'expected_accuracy': 100., 'absolute_deviation': 0.} for r in RATINGS}}
 
 
 class HintTests(unittest.TestCase):
@@ -90,14 +98,14 @@ class HintTests(unittest.TestCase):
     def test_maia_trends_use_actual_level_interpolation_and_sound_moves(self):
         row = row_for(.8, .5)
         for c in row['candidate_moves']:
-            for r in range(1000,2601,100):
+            for r in RATINGS:
                 c['maia_p'][str(r)] = .001
         played = next(c for c in row['candidate_moves'] if c['move']=='e2e4')
         better = next(c for c in row['candidate_moves'] if c['move']=='d2d4')
-        for r in range(1000,2601,100):
+        for r in RATINGS:
             played['maia_p'][str(r)] = .3-(r-1000)/10000
             better['maia_p'][str(r)] = .2+(r-1000)/2000
-            row['maia'][str(r)] = sorted(row['candidate_moves'], key=lambda c: -c['maia_p'][str(r)])[:5]
+            row['maia'][str(r)]['moves'] = ranking_for(row['candidate_moves'], r)
         flags = move_flags(row, 1200)
         self.assertTrue({'natural_but_bad','higher_elo_improvement','stronger_maia_converges'} <= set(flags))
         self.assertAlmostEqual(probability(better, 1250), .325)
@@ -108,12 +116,13 @@ class HintTests(unittest.TestCase):
     def test_engine_only_and_human_consensus(self):
         row = row_for(.8, .8)
         for c in row['candidate_moves']:
-            c['maia_p'] = {str(r): .01 for r in range(1000,2601,100)}
+            c['maia_p'] = {str(r): .01 for r in RATINGS}
             if c['move'] != 'e2e4': c['eval'] = cp_for(.4)
         self.assertIn('engine_only_move', move_flags(row, 1400))
         best = next(c for c in row['candidate_moves'] if c['move']=='e2e4')
-        best['maia_p'] = {str(r): .7 for r in range(1000,2601,100)}
-        row['maia'] = {str(r): [best] for r in range(1000,2601,100)}
+        best['maia_p'] = {str(r): .7 for r in RATINGS}
+        for r in RATINGS:
+            row['maia'][str(r)]['moves'] = ranking_for([best], r)
         self.assertIn('human_consensus', move_flags(row, 1400))
         self.assertNotIn('engine_only_move', move_flags(row, 1400))
 
@@ -170,14 +179,14 @@ class HintTests(unittest.TestCase):
 
     def test_analyze_game_persists_sacrifices_for_summary_reuse(self):
         game = sacrifice_game()
-        engines = FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        analysis = analyze_game(game, engines, 'white', 1270, progress=lambda _: None)
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        analysis = analyze_game(game, session, actual_elo=1270, progress=lambda _: None)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'analysis.json'
             write_json(path, analysis)
             saved = json.loads(path.read_text(encoding='utf-8'))
-        summary = compact_summary(saved)
+        summary = compact_summary(saved, 'white')
         for ply in (35,39):
             self.assertIn('sacrifice', saved['moves'][ply-1]['flags'])
             self.assertIn('sacrifice', next(row[3] for row in summary['overview'] if row[0] == ply))

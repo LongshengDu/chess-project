@@ -15,27 +15,26 @@ def compare(baseline, optimized):
     baseline_timings, _ = load_timings(baseline)
     optimized_timings, _ = load_timings(optimized)
     old, new = summarize(baseline_timings), summarize(optimized_timings)
-    saved_old = json.loads((baseline / 'saved-analysis.json').read_text(encoding='utf-8'))['positions']
-    saved_new = json.loads((optimized / 'saved-analysis.json').read_text(encoding='utf-8'))['positions']
+    saved_old = {event['ply']: event for event in baseline_timings['events'] if event['kind'] == 'stockfish'}
+    saved_new = {event['ply']: event for event in optimized_timings['events'] if event['kind'] == 'stockfish'}
     assert len(old['positions']) == len(new['positions']) == len(saved_old) == len(saved_new)
     rows = []
-    for left, right, a, b in zip(old['positions'], new['positions'], saved_old, saved_new):
-        assert chess.Board(left['fen']).fen() == chess.Board(right['fen']).fen() == chess.Board(b['fen']).fen()
-        old_sf, new_sf = a['stockfish'], b['stockfish']
-        assert new_sf['complete'] and len(b['maia']) == 21
+    for left, right in zip(old['positions'], new['positions'], strict=True):
+        old_sf, new_sf = saved_old[left['ply']], saved_new[right['ply']]
+        assert chess.Board(left['fen']).fen() == chess.Board(right['fen']).fen()
         move = None
         if left['ply'] + 1 < len(saved_new):
-            board = chess.Board(b['fen'])
+            board = chess.Board(new_sf['fen'])
             after = chess.Board(saved_new[left['ply'] + 1]['fen']).fen()
             for candidate in board.legal_moves:
                 child = board.copy(); child.push(candidate)
                 if child.fen() == after:
                     move = candidate.uci(); break
             assert move
-        best_old = old_sf.get('best_move', old_sf.get('model_move'))
-        best_new = new_sf.get('best_move', new_sf.get('model_move'))
-        old_cp = old_sf.get('model_optimal_cp', old_sf['cp_vec'].get(best_old))
-        new_cp = new_sf.get('model_optimal_cp', new_sf['cp_vec'].get(best_new))
+        best_old = old_sf['best_move']
+        best_new = new_sf['best_move']
+        old_cp = old_sf['cp_vec'].get(best_old)
+        new_cp = new_sf['cp_vec'].get(best_new)
         best_mate = best_old in old_sf['mate_vec'] or best_new in new_sf['mate_vec']
         played_mate = move in old_sf['mate_vec'] or move in new_sf['mate_vec']
         rows.append({'ply':left['ply'], 'move':left['move'],
@@ -46,10 +45,10 @@ def compare(baseline, optimized):
                      'best_cp_delta':None if best_mate or not move or old_cp is None or new_cp is None else abs(old_cp-new_cp),
                      'played_cp_delta':None if played_mate or not move else abs(old_sf['cp_vec'][move]-new_sf['cp_vec'][move]),
                      'best_depth':new_sf['depth'],
-                     'played_depth':new_sf.get('root_move_depth_vec',{}).get(move),
+                     'played_depth':new_sf['root_move_depth_vec'].get(move),
                      'candidate_min_depth':new_sf.get('candidate_min_depth'),
-                     'target_reached':new_sf.get('target_reached',True),
-                     'coverage_complete':new_sf.get('coverage_complete',True)})
+                     'target_reached':right['target_reached'],
+                     'coverage_complete':new_sf['coverage_complete']})
     active = [r for r in rows if r['played_depth'] is not None]
     best_deltas = [r['best_cp_delta'] for r in rows if r['best_cp_delta'] is not None]
     played_deltas = [r['played_cp_delta'] for r in rows if r['played_cp_delta'] is not None]
@@ -100,7 +99,7 @@ def main():
         '## Sources','',
         '- [Stockfish UCI documentation](https://official-stockfish.github.io/docs/stockfish-wiki/UCI-Protocol-and-Stockfish-Commands.html): combined limits stop at the first limit; MultiPV 1 gives the best performance; threads should match available CPU cores.',
         '- [python-chess engine limits](https://python-chess.readthedocs.io/en/latest/engine.html#chess.engine.Limit): native time and depth parameters.', '',
-        'Full data: [position comparison](comparison.csv), [component report](REPORT.md), [all searches](searches.csv), [saved evaluations](saved-analysis.json).','']
+        'Full data: [position comparison](comparison.csv), [component report](REPORT.md), [all searches](searches.csv), [runtime timings and evaluations](runtime-profiler.json).','']
     (args.optimized/'COMPARISON.md').write_text('\n'.join(lines),encoding='utf-8')
     print(json.dumps({k:v for k,v in result.items() if k!='positions'},indent=2))
 

@@ -115,6 +115,12 @@ NAMES = {
     "cb": "Chess.com Blitz",
     "cr": "Chess.com Rapid",
 }
+SCALE_IDENTIFIERS = {
+    'lb': 'lichess_blitz',
+    'lr': 'lichess_rapid',
+    'cb': 'chess_com_blitz',
+    'cr': 'chess_com_rapid',
+}
 LB_MIN, LB_MAX = 400.0, 2800.0
 MODEL_VERSION = "2026-10-06-unanchored"
 _EPS = 1e-9

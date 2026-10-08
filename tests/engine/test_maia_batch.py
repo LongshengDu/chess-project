@@ -16,20 +16,43 @@ from engine.maia import MaiaPolicy
 
 
 class MaiaBatchTests(unittest.TestCase):
-    def test_signature_resolves_the_lazy_checkpoint_once_without_a_second_model(self):
+    def test_asset_signature_requires_neither_cuda_nor_engine_construction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / 'model.pt'
+            checkpoint.write_bytes(b'fixture')
+            with patch('engine.maia.torch.cuda.is_available', return_value=False), \
+                 patch('engine.maia.Maia3UCIEngine') as engine:
+                signature = MaiaPolicy.asset_signature('maia3-79m', Path(directory), 'cuda', checkpoint=checkpoint)
+            self.assertEqual(signature['device'], 'cuda')
+            self.assertTrue(signature['maia'].startswith('sha256:'))
+            engine.assert_not_called()
+
+    def test_asset_signature_never_discovers_remote_checkpoint_names(self):
+        config = SimpleNamespace(checkpoint_path=None, checkpoint_filename=None,
+                                 model_spec=SimpleNamespace(checkpoint_filename=None))
+        with patch('engine.maia.resolve_checkpoint_path') as resolver:
+            with self.assertRaises(FileNotFoundError):
+                MaiaPolicy._signature(config)
+        resolver.assert_not_called()
+
+    def test_signature_resolves_checkpoint_without_loading_model(self):
         with tempfile.TemporaryDirectory() as directory:
             checkpoint = Path(directory)/'model.pt'
             checkpoint.write_bytes(b'fixture')
-            config = SimpleNamespace(checkpoint_path=None, history=8, device='cpu')
+            config = SimpleNamespace(checkpoint_path=None, history=8, device='cpu',
+                model_spec='fixture', checkpoint_filename='model.pt', cache_dir=directory, revision=None)
             engine = Mock(cfg=config)
-            engine.ensure_model_loaded.side_effect = lambda: setattr(config, 'checkpoint_path', str(checkpoint))
             policy = MaiaPolicy.__new__(MaiaPolicy)
             policy._engine = engine
             policy._inference_lock = threading.RLock()
-            first = policy.model_signature
-            self.assertEqual(first, policy.model_signature)
-            self.assertEqual(first['maia'], [str(checkpoint.resolve()), checkpoint.stat().st_mtime_ns])
-            engine.ensure_model_loaded.assert_called_once()
+            with patch('engine.maia.resolve_checkpoint_path', return_value=str(checkpoint)) as resolve:
+                first = policy.model_signature
+                self.assertEqual(first, policy.model_signature)
+            from engine.assets_identity import asset_identity
+            self.assertEqual(first['maia'], asset_identity(checkpoint))
+            resolve.assert_called_once()
+            self.assertTrue(resolve.call_args.kwargs['local_files_only'])
+            engine.ensure_model_loaded.assert_not_called()
 
     def test_history_tail_is_exactly_equivalent_to_full_replay(self):
         board=chess.Board()

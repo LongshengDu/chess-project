@@ -8,6 +8,17 @@ from analysis.stockfish_search import SearchControl, resolve_search_seconds, str
 from analysis.settings import CONFIG
 
 
+def evaluation_frame(board=None, *, depth=18, strategy='bounded', cp=20):
+    """Complete legal-move evidence for cache/transport tests using fake engines."""
+    board = chess.Board() if board is None else board
+    legal = [move.uci() for move in board.legal_moves]
+    return {'complete': True, 'coverage_complete': True, 'depth': depth,
+            'strategy': strategy, 'is_checkmate': board.is_checkmate(),
+            'best_move': legal[0], 'engine_moves': legal[:4],
+            'cp_vec': dict.fromkeys(legal, cp), 'mate_vec': {},
+            'root_move_depth_vec': dict.fromkeys(legal, depth)}
+
+
 class FakeSearch:
     def __init__(self, infos):
         self.infos = infos
@@ -25,7 +36,7 @@ class SearchTests(unittest.TestCase):
         engine = Mock()
         def analyse(board, limit, multipv, root_moves=None):
             moves = root_moves or list(board.legal_moves)[:multipv]
-            return FakeSearch([{"depth": limit.depth - int(incomplete), "pv": [move],
+            return FakeSearch([{"depth": limit.depth - int(incomplete), "pv": [move], "multipv": index + 1,
                                 "score": chess.engine.PovScore(chess.engine.Cp(index), board.turn)}
                                for index, move in enumerate(moves)])
         engine.analysis.side_effect = analyse

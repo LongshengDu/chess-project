@@ -13,6 +13,18 @@ from analysis.settings import CONFIG
 BOUNDED_POLICY_VERSION = 2
 
 
+def search_candidates(depth, strategy, options=None):
+    """Return the effective deepening order shared by execution and cache identity."""
+    if strategy == 'exhaustive' or (strategy != 'bounded' and depth <= 4):
+        return []
+    options = options or {}
+    forced = list(options.get('forcedCandidateMoves', []))
+    human = list(options.get('maiaCandidateMoves', []))[:4]
+    ordered = forced + human if strategy == 'bounded' else human + forced
+    # Order affects sequential search budgets and hash reuse; only duplicates vanish.
+    return list(dict.fromkeys(ordered))
+
+
 def resolve_search_seconds(seconds=None, maximum=None):
     """Resolve a position allowance independently of its search-depth ceiling."""
     settings = CONFIG['ANALYSIS']['STOCKFISH_EVALUATION']
@@ -172,10 +184,7 @@ def stream_evaluations(engine, board, depth, options=None, strategy=None, contro
         # then finish human/played candidates at full depth.
         screen_depth = max(4, min(10, depth - 6))
         yield from search(screen_depth, len(legal), phase="screening")
-        candidates = list(dict.fromkeys([
-            *options.get("maiaCandidateMoves", [])[:4],
-            *options.get("forcedCandidateMoves", []),
-        ]))
+        candidates = search_candidates(depth, strategy, options)
         candidates = [move for move in candidates if move in legal]
         def deepen(target, phase):
             for move in candidates:
@@ -199,8 +208,7 @@ def bounded_evaluations(engine, board, depth, options=None, control=None, on_sea
     """
     control, options = control or SearchControl(), options or {}
     legal = {move.uci(): move for move in board.legal_moves}
-    candidates = list(dict.fromkeys([*options.get("forcedCandidateMoves", []),
-                                    *options.get("maiaCandidateMoves", [])[:4]]))
+    candidates = search_candidates(depth, 'bounded', options)
     candidates = [move for move in candidates if move in legal]
     budget = resolve_search_seconds(seconds)
     started = time.perf_counter()

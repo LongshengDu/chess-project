@@ -1,19 +1,18 @@
 """Native Maia scheduling and persisted rating-scale context through the pipeline."""
 import io
 import unittest
-from unittest.mock import patch
 
 import chess.pgn
 
 from analysis import elo_convert
 from analysis.game.pipeline import analyze_game
-from analysis.player_rating.parameters import RATINGS as FIT_RATINGS
+from analysis.accuracy.evidence import RATINGS as MAIA_RATINGS
 from analysis.position_evaluation import RATINGS
-from analysis.settings import CONFIG
-from tests.coach.fixtures import FakeEngines
+from analysis.maia_context import analysis_scale, native_actual_ratings
+from tests.coach.fixtures import FakeAnalysisSession
 
 
-class RatingSpecificEngines(FakeEngines):
+class RatingSpecificAnalysisSession(FakeAnalysisSession):
     """Make each rating's leading legal move distinct and record SF priorities."""
 
     def __init__(self, start_fen):
@@ -42,66 +41,78 @@ class PipelineScaleTests(unittest.TestCase):
             '[Site "Chess.com"]\n[TimeControl "600+0"]\n[WhiteElo "1500"]\n'
             '[BlackElo "1400"]\n\n1. e4 e5 *'))
 
-    def engine(self, game):
-        engine = RatingSpecificEngines(game.board().fen())
-        self.addCleanup(engine._temp.cleanup)
-        return engine
+    def session(self, game):
+        session = RatingSpecificAnalysisSession(game.board().fen())
+        self.addCleanup(session._temp.cleanup)
+        return session
 
-    def test_priority_moves_use_native_header_rating_and_maia_anchors_remain_native(self):
+    def test_priority_moves_use_effective_native_ratings_and_maia_anchors_remain_native(self):
         game = self.game()
-        engine = self.engine(game)
-        with patch.dict(CONFIG['ANALYSIS']['PLAYER_RATING'], METHOD='bayesian_shared_curve'):
-            analysis = analyze_game(game, engine, 'white', 1700, progress=lambda _: None)
-        self.assertEqual(analysis['played_elo_scale']['scale'], 'cr')
-        self.assertNotIn('rating_scale_override', analysis)
-        for history, own, other in engine.pair_calls:
-            self.assertEqual(own, list(FIT_RATINGS))
-            self.assertEqual(other, list(FIT_RATINGS))
+        session = self.session(game)
+        analysis = analyze_game(game, session, actual_elo=1700, progress=lambda _: None)
+        self.assertEqual(analysis_scale(analysis), 'cr')
+        self.assertEqual(analysis['game']['rating_scale'], 'chess_com_rapid')
+        for history, own, other in session.pair_calls:
+            self.assertEqual(own, list(MAIA_RATINGS))
+            self.assertEqual(other, list(MAIA_RATINGS))
         for index, side in enumerate(('White', 'Black')):
-            history, _, priority = engine.jobs[index]
-            native = elo_convert.convert(int(game.headers[side+'Elo']), 'cr', 'lb', extrapolate=True)
+            history, _, priority = session.jobs[index]
+            native = elo_convert.convert(1700, 'cr', 'lb', extrapolate=True)
             nearest = min(RATINGS, key=lambda rating: abs(rating-native))
-            legal = sorted(move.uci() for move in engine.board(history).legal_moves)
+            legal = sorted(move.uci() for move in session.board(history).legal_moves)
             expected = legal[((nearest-600)//100) % len(legal)]
             self.assertEqual(priority[0], expected)
             # Distinguish the source-scale bug from native-coordinate priority.
-            wrong = min(RATINGS, key=lambda rating: abs(rating-int(game.headers[side+'Elo'])))
+            wrong = min(RATINGS, key=lambda rating: abs(rating-1700))
             self.assertNotEqual(priority[0], legal[((wrong-600)//100) % len(legal)])
-        self.assertEqual(analysis['rating_account_overrides'], {'White': 1700})
-        self.assertEqual(analysis['selected_player'], {'side': 'white', 'actual_elo': 1700})
-        self.assertEqual(analysis['played_elo_scale']['actual_ratings'], {'White': 1700., 'Black': 1400.})
+        for side in ('white', 'black'):
+            self.assertEqual(analysis['game'][side], {'name': None, 'elo': 1700})
+        self.assertEqual(analysis['coaching'], {})
+        self.assertAlmostEqual(native_actual_ratings(analysis)['White'], elo_convert.convert(1700, 'cr', 'lb', extrapolate=True))
+        self.assertEqual(native_actual_ratings(analysis)['White'], native_actual_ratings(analysis)['Black'])
+        self.assertEqual(analysis['accuracy_curve']['rating_scale'], 'lb')
 
     def test_explicit_scale_is_persisted_and_controls_priority_without_changing_headers(self):
         game = self.game()
-        engine = self.engine(game)
-        with patch.dict(CONFIG['ANALYSIS']['PLAYER_RATING'], METHOD='bayesian_shared_curve'):
-            analysis = analyze_game(game, engine, progress=lambda _: None, rating_scale='lb')
-        self.assertEqual(analysis['rating_scale_override'], 'lb')
-        self.assertEqual(analysis['played_elo_scale']['scale'], 'lb')
-        self.assertEqual(analysis['played_elo_scale']['source'], 'override')
+        session = self.session(game)
+        analysis = analyze_game(game, session, progress=lambda _: None, rating_scale='lb')
+        self.assertEqual(analysis['game']['rating_scale'], 'lichess_blitz')
+        self.assertEqual(analysis_scale(analysis), 'lb')
         self.assertEqual(analysis['headers'], dict(game.headers))
         legal = sorted(move.uci() for move in game.board().legal_moves)
-        self.assertEqual(engine.jobs[0][2][0], legal[(1500-600)//100])
+        self.assertEqual(session.jobs[0][2][0], legal[(1500-600)//100])
 
     def test_unsupported_scale_fails_before_any_analysis_engine_calls(self):
         game = self.game()
         game.headers.update(Site='lichess.org', TimeControl='60+0')
-        engine = self.engine(game)
+        session = self.session(game)
         with self.assertRaises(elo_convert.UnsupportedRatingScale):
-            analyze_game(game, engine, progress=lambda _: None)
-        self.assertFalse(engine.pair_calls or engine.sf_calls or engine.jobs)
+            analyze_game(game, session, progress=lambda _: None)
+        self.assertFalse(session.pair_calls or session.sf_calls or session.jobs)
 
-    def test_unreachable_header_or_selected_rating_floor_fails_before_inference(self):
-        for source in ('header', 'selected'):
+    def test_unreachable_effective_rating_floor_fails_before_inference(self):
+        for source in ('header', 'override'):
             with self.subTest(source=source):
                 game = self.game()
                 if source == 'header':
                     game.headers['BlackElo'] = '100'
-                engine = self.engine(game)
-                actual = 100 if source == 'selected' else 1500
+                session = self.session(game)
+                actual = 100 if source == 'override' else None
                 with self.assertRaisesRegex(ValueError, 'lower asymptote'):
-                    analyze_game(game, engine, 'white', actual, progress=lambda _: None)
-                self.assertFalse(engine.pair_calls or engine.sf_calls or engine.jobs)
+                    analyze_game(game, session, actual_elo=actual, progress=lambda _: None)
+                self.assertFalse(session.pair_calls or session.sf_calls or session.jobs)
+
+    def test_explicit_pair_overrides_unusable_pgn_ratings_and_scale(self):
+        game = self.game()
+        game.headers.update(Site='?', TimeControl='?', WhiteElo='?', BlackElo='100')
+        session = self.session(game)
+        result = analyze_game(game, session, actual_elo=1600, rating_scale='lb', progress=lambda _: None)
+        self.assertEqual(result['coaching'], {})
+        self.assertEqual(native_actual_ratings(result), {'White': 1600., 'Black': 1600.})
+        self.assertEqual(result['headers'], dict(game.headers))
+        for history, _, priority in session.jobs[:-1]:
+            legal = sorted(move.uci() for move in session.board(history).legal_moves)
+            self.assertEqual(priority[0], legal[((1600-600)//100) % len(legal)])
 
 
 if __name__ == '__main__':

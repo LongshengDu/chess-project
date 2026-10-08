@@ -14,9 +14,10 @@ from tempfile import TemporaryDirectory
 import chess.pgn
 
 from analysis.game.pipeline import analyze_game
-from analysis.cache import write_json
-from analysis.engine_session import Engines, Limits
-from analysis.player_rating.figures import export_saved_figures
+from analysis.cache.positions import PositionCache
+from analysis.cache.requests import stockfish_request_metadata
+from analysis.session import AnalysisSession, Limits
+from analysis.accuracy.figures import export_saved_figures
 from backend.settings import CONFIG
 
 
@@ -114,7 +115,25 @@ class FullGameAnalysis:
         if not run.started and run.profiler_id and profiler:
             with profiler.lock:
                 if profiler.active and profiler.run_id == run.profiler_id:
-                    profiler.abort({'run_id': run.profiler_id, 'cancelled': True})
+                        profiler.abort({'run_id': run.profiler_id, 'cancelled': True})
+
+    @staticmethod
+    def _presentation(analysis, cache):
+        """Publish executed limits beside UI scores while preserving raw evidence."""
+        references = analysis.get('position_references')
+        if references is None:
+            return analysis
+        records = cache.get_reference_records([reference['stockfish'] for reference in references])
+        positions = []
+        for position, reference, record in zip(analysis['positions'], references, records, strict=True):
+            if reference['stockfish'] is None:
+                positions.append(position)
+                continue
+            if record is None:
+                raise ValueError('A pinned Stockfish measurement is missing during game publication.')
+            positions.append({**position, 'stockfish': {
+                **position['stockfish'], **stockfish_request_metadata(record['request'])}})
+        return {**analysis, 'positions': positions}
 
     def _analyze(self, run):
         platform = self.platform
@@ -150,16 +169,15 @@ class FullGameAnalysis:
             # Cold runtime profiling never deletes or contaminates ordinary evidence.
             cache = TemporaryDirectory(prefix='chess-profiler-') if profiler else nullcontext(CONFIG['ANALYSIS']['CACHE_DIR'])
             with cache as cache_dir:
-                with Engines.borrowed(run.game.board().fen(), cache_dir,
+                with AnalysisSession.borrowed(run.game.board().fen(), cache_dir,
                         platform.maia, platform.stockfish, limits=run.limits, cancel=run.cancelled,
-                        record=record if profiler else None) as engines:
-                    result = analyze_game(run.game, engines, progress=progress,
+                        record=record if profiler else None) as session:
+                    result = analyze_game(run.game, session, progress=progress,
                                           on_position=position, cancel=run.cancelled)
+                    presentation = self._presentation(result, session.cache)
                 if profiler and not run.cancelled.is_set():
-                    # Keep rating evidence reusable after the isolated cold run.
-                    for source in Path(cache_dir).rglob('*.json'):
-                        target = CONFIG['ANALYSIS']['CACHE_DIR'] / source.relative_to(cache_dir)
-                        write_json(target, json.loads(source.read_text(encoding='utf-8')))
+                    # Keep engine evidence reusable after the isolated cold run.
+                    PositionCache(CONFIG['ANALYSIS']['CACHE_DIR']).import_directory(cache_dir)
             if run.cancelled.is_set():
                 run.events.put({'type': 'cancelled'})
                 return
@@ -167,7 +185,7 @@ class FullGameAnalysis:
             # files. Cancellation or deletion can discard this complete draft.
             output_root = platform.repository.output_directory
             output_root.mkdir(parents=True, exist_ok=True)
-            with TemporaryDirectory(prefix='.rating-', dir=output_root) as staged:
+            with TemporaryDirectory(prefix='.accuracy-', dir=output_root) as staged:
                 export_saved_figures(result, staged)
                 # Publication and cancellation have one ordering. The repository
                 # transaction also prevents deletion between its check and save.
@@ -175,11 +193,11 @@ class FullGameAnalysis:
                     if run.cancelled.is_set():
                         run.events.put({'type': 'cancelled'})
                         return
-                    if not platform.repository.save_full_analysis(run.game_id, result,
-                                                                  rating_figures=Path(staged)):
+                    if not platform.repository.save_full_analysis(run.game_id, presentation,
+                                                                  accuracy_figures=Path(staged)):
                         raise LookupError('The game was deleted while analysis was running')
                     published = True
-            run.events.put({'type': 'complete', 'analysis': result})
+            run.events.put({'type': 'complete', 'analysis': presentation})
         except Exception as exc:
             run.events.put({'type': 'cancelled'} if run.cancelled.is_set()
                            else {'type': 'error', 'message': str(exc)})

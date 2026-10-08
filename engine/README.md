@@ -1,110 +1,75 @@
 # Chess engine adapters
 
-`engine/` provides Maia inference, Stockfish scoring, downloadable runtime
-assets, and UCI process management. It supplies engine operations to the web
-backend and coach. Game analysis, search orchestration, accuracy, and rating
-calculations belong to [analysis/](../analysis/README.md).
+`engine/` provides Maia inference, Stockfish adapters, downloadable assets and native process management. This is the development reference; see the root guide for [setup](../README.md#install-and-run), [usage](../README.md#usage) and [configuration](../README.md#configuration).
 
-## Modules and interfaces
+## Design
+
+Maia inference runs in process; Stockfish runs as native UCI processes. Applications own their adapters and close them on shutdown. Sharing code or cached files does not share running processes between applications.
+
+`EngineRuntime` groups owned or borrowed resources, accepts explicit configuration and manages their lifetime. Entering an owned runtime resolves local asset identities; model weights and Stockfish processes start only when a cache miss needs inference or search. Borrowing server engines leaves their lifetime with the server. The runtime has no analysis-result cache or dependency on `analysis`; [AnalysisSession](../analysis/README.md#design) owns cached requests, search orchestration and job cancellation. Accuracy calculations and game policy belong to analysis.
+
+## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `maia.py` | `MaiaPolicy`: history-aware move probabilities and batched position/rating inference |
-| `stockfish.py` | `StockfishScorer`: position/candidate scoring and access to the analysis worker pool |
-| `stockfish_pool.py` | `StockfishPool`: persistent workers, leases, and thread/hash allocation per worker |
-| `uci.py` | Stockfish executable resolution, startup, cleanup, and time-unit conversion |
-| `assets_maia.py` | Resolve the configured checkpoint or populate the official Maia model cache |
-| `assets_stockfish.py` | Resolve, verify, download and atomically install official Stockfish binaries |
-| `assets.py` | Asset preparation entry point: `python -m engine.assets` |
-| `settings.py` | Read root YAML for engine consumers and resolve configured paths |
+| [runtime.py](runtime.py) | `EngineRuntime`: owned/borrowed resources and native startup, shutdown and pool lifetime |
+| [maia.py](maia.py) | `MaiaPolicy`: history-aware move probabilities and batched position/rating inference |
+| [stockfish.py](stockfish.py) | `StockfishScorer`: direct position/candidate scoring and access to the analysis pool |
+| [stockfish_pool.py](stockfish_pool.py) | `StockfishPool`: persistent workers, leases and per-worker thread/hash allocation |
+| [uci.py](uci.py) | Executable resolution, UCI startup/cleanup and time-unit conversion |
+| [assets_maia.py](assets_maia.py) | Resolve the configured checkpoint or populate the official Maia model cache |
+| [assets_stockfish.py](assets_stockfish.py) | Resolve, verify, download and atomically install official Stockfish binaries |
+| [assets_identity.py](assets_identity.py) | Fingerprint local asset contents without loading models or starting engines |
+| [assets.py](assets.py) | `ensure_runtime_assets` and the `python -m engine.assets` preparation entry point |
+| [settings.py](settings.py) | Read root YAML and resolve engine paths |
 
-The `assets_*` modules form the download and installation group; the
-`stockfish_*` modules extend the Stockfish adapter with worker management.
-`maia.py`, `stockfish.py` and `uci.py` retain their direct engine/protocol names.
+## Interfaces
 
-Maia inference runs in process. Stockfish runs as native UCI processes.
-Applications own their adapters and must close them on shutdown; sharing code
-and cached files does not share running processes between applications.
-
-## Setup and configuration
-
-From the repository root, prepare assets and launch the web application:
-
-```powershell
-python -m engine.assets
-python backend/app.py
-```
-
-Each component reads [config.yaml](../config.yaml) through its own settings
-module. Engine adapters use `engine/settings.py`; analysis uses
-`analysis/settings.py`. There is no global configuration loader.
-
-| Section | Engine-related settings |
+| Interface | Contract |
 | --- | --- |
-| `MAIA` | Model/checkpoint, device, inference batch size, sampling temperature, and caches |
-| `STOCKFISH` | Executable, asset/download configuration, cache, and startup timeout |
-| `ANALYSIS` | Worker count, threads and hash per worker, search limits, and result cache |
+| `EngineRuntime` context manager | Resolve local assets and signatures, then close any resources started during the session |
+| `EngineRuntime.get_stockfish()` | Start the direct Stockfish worker on the first uncached search |
+| `EngineRuntime.borrow(maia, stockfish_scorer)` | Attach existing adapters without taking ownership; closing the runtime leaves them running |
+| `EngineRuntime.create_pool(workers)` | Allocate the caller's chosen concurrency; pool workers start lazily |
+| `MaiaPolicy.batch_evaluate(fens, ratings, opponents, timings=None, *, boards=None)` | Return aligned full legal policies and White expected scores; optional timing fields use milliseconds |
+| `MaiaPolicy.probabilities(board)` | Use the same inference path at configured `MAIA.PLAYER_RATING` |
+| `MaiaPolicy.asset_signature(...)` | Resolve local identity without constructing a model adapter or requiring an available GPU |
+| `StockfishScorer.evaluate(board)` / `score(board, moves)` | Return White-oriented scores and achieved depth from a serialized direct worker |
+| `StockfishScorer.analysis_pool` | Lazily create the shared pool for independent searches |
+| `StockfishPool.acquire(control=None)` | Lease a worker and release it on completion, cancellation or error |
+| `StockfishPool.clear_hash()` / `close()` | Serialize maintenance; closing rejects new leases and hash resets |
 
-Model and executable caches default to `engine/.cache/maia3` and
-`engine/.cache/stockfish`. These differ from shared analysis evidence in `ANALYSIS.CACHE_DIR`
-and saved web studies in `SERVER.STORAGE.DATABASE`. Changing a report/output
-directory does not relocate engine assets.
+Maia's `boards` argument accepts a FEN-to-board mapping or an aligned board list. Use a list when the same FEN occurs with different histories. Preparation-cache keys retain complete history while tokenization uses the model's recent-history window. Inference preserves legal-move alignment; `value` is White's expected game score, `P(win) + 0.5 * P(draw)`, not pure win probability. Loading, preparation-cache access and inference share an internal lock. `model_signature` resolves an existing local checkpoint and its content fingerprint without loading model weights; explicit `load()` remains available for applications requiring startup readiness.
 
-## Maia batching and history
+`StockfishScorer` serializes its direct process because overlapping UCI commands can cancel a search. Concurrent searches use pool leases. Closing the scorer is idempotent and final; create another adapter for a new lifetime. Search scheduling and continuation policy remain in `analysis.stockfish_search` and `analysis.stockfish_exploration`; adapters must report achieved depth separately from a requested target.
 
-`MAIA.DEVICE: auto` selects CUDA when available. `MAIA.BATCH_SIZE` limits
-position/rating rows per inference batch; its current default is 128. A batch can
-evaluate multiple positions and multiple player/opponent rating pairs together.
+## Configuration
 
-`MaiaPolicy.batch_evaluate(..., boards=...)` accepts a FEN-to-board mapping or an
-aligned board list. Use the list when identical FENs arise through different
-histories. Preparation-cache keys retain the complete game history, while model
-tokenization uses its recent history window. `MAIA.POSITION_CACHE_ENTRIES` limits
-cached CPU preparation. Game-wide batching and reusable policy caches are
-coordinated by `analysis.engine_session` and `analysis.player_rating.policies`.
-Single-position `probabilities()` uses this same inference path. The adapter
-serializes model loading, preparation-cache access and inference internally, so
-sharing it between callers cannot race model initialization or cache eviction.
+`settings.py` reads [config.yaml](../config.yaml) directly. Root [configuration rules](../README.md#configuration) govern paths, units and CLI overrides.
 
-## Stockfish workers and search limits
+| Setting | Engine responsibility |
+| --- | --- |
+| `MAIA.MODEL`, `CHECKPOINT`, `CACHE_DIR`, `CACHE_EXECUTABLE` | Model identity and asset preparation |
+| `MAIA.DEVICE` | `auto` selects available CUDA support; `cpu` provides the CPU path |
+| `MAIA.BATCH_SIZE`, `POSITION_CACHE_ENTRIES` | Maximum position/rating rows per inference batch and cached CPU preparations |
+| `MAIA.PLAYER_RATING`, `TEMPERATURE` | Default inference conditioning and play sampling |
+| `STOCKFISH.EXECUTABLE`, `CACHE_DIR`, `RELEASE_API`, `ASSETS` | Binary resolution and official downloads |
+| `STOCKFISH.START_TIMEOUT_SECONDS` | UCI startup timeout |
+| `ANALYSIS.STOCKFISH_WORKERS`, `STOCKFISH_THREADS_PER_WORKER`, `STOCKFISH_HASH_MB_PER_WORKER` | Independent worker count and resources per worker |
+| `ANALYSIS.STOCKFISH_EVALUATION` | Direct scoring depth and time limits |
 
-`ANALYSIS.STOCKFISH_WORKERS` controls independent searches;
-`ANALYSIS.STOCKFISH_THREADS_PER_WORKER` controls threads within each engine.
-Current defaults are four workers × four threads, giving 16 search threads.
-`ANALYSIS.STOCKFISH_HASH_MB_PER_WORKER: 128` allocates 128 MB to each engine.
-The default four-worker pool therefore uses 512 MB of hash. Increasing the
-worker count increases total hash memory without reducing memory per worker.
-A separate direct-scoring process, when started, also receives 128 MB; its hash
-is additional to the pool allocation. Engine process overhead is additional to
-these hash sizes.
+Pool search threads equal `workers × threads_per_worker`; hash allocation equals `workers × hash_mb`. Any separate direct process receives another per-worker hash allocation, with process/model overhead additional. Raising worker count does not reduce memory per worker.
 
-The coach CLI can override this setting with `--hash-mb-per-worker`; the earlier
-`--hash-mb` spelling remains an alias with the same per-worker meaning.
+Asset caches default to `engine/.cache/maia3` and `engine/.cache/stockfish`. Reusable result measurements belong to [analysis's position cache](../analysis/README.md#coaching-artifacts-and-analysis-cache). Native adapters neither own that storage nor hold its file locks during computation. Batch shape affects scheduling, while individual rating pairs determine reusable Maia request identity.
 
-Workers start lazily and are leased for individual searches. Cancellation and
-errors release leases; closing the pool shuts down its processes. Whole-game
-search scheduling belongs to `analysis.stockfish_search`; continuation exploration belongs
-to `analysis.stockfish_exploration`. Both consume the common `ANALYSIS` budgets. Depth and
-time limits constrain search, so time-limited results can vary between runs even
-when configuration is unchanged.
+Engine asset identity uses SHA-256 of file contents, so moving or touching identical assets preserves compatibility. Changed bytes invalidate the identity. Model history/device and Stockfish thread/hash settings remain part of the relevant engine signature.
 
-Pool shutdown rejects new leases and hash resets. Concurrent hash resets collect
-workers one operation at a time. `StockfishScorer` serializes its separate direct
-scoring worker; concurrent searches use `analysis_pool`. Closing the scorer is
-idempotent and final: create a new adapter to start another session.
+## Development
 
-## Tests and measurements
+Keep model loading, inference and native lifetimes here; use the shared adapters for every consumer. Preserve history and input order when batching, keep a working CPU path, and account for total worker resources when changing concurrency. Close owned resources on failure and cancellation without closing borrowed engines.
 
-Engine regression tests and the benchmark utility live in `tests/engine/`:
+Measure model startup, inference, search and elapsed time separately before tuning. Stockfish time limits and achieved depth can vary between runs under the same configuration. The engine benchmark is a development utility; [the test guide](../tests/README.md) owns benchmark and live-run commands.
 
-```powershell
-python -m unittest discover -s tests/engine -t . -p "test_*.py"
-python -m tests.engine.benchmark_engines --help
-```
+## Verification
 
-The benchmark is a development tool, separate from application startup. For
-whole-game measurements, see the [analysis guide](../analysis/README.md#entry-points)
-and [whole-game timing checks](../tests/README.md#single-game-speed).
-Player-rating calculations are documented in the
-[shared-curve technical paper](../docs/bayesian_shared_curve.md) and the
-[estimator interface](../analysis/README.md#player-rating-estimator-interface).
+Regression coverage in `tests/engine/` checks adapters, assets, batching/history, resource ownership and concurrent pool cleanup. Use the [shared test guide](../tests/README.md) for offline commands; prefer fake models and UCI processes for focused changes. Whole-game accuracy, cache and profiler validation belongs to [analysis](../analysis/README.md#verification).

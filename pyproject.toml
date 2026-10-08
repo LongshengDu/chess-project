@@ -8,7 +8,7 @@ dependencies = [
     "maia3",
     "matplotlib>=3.9,<4",
     "numpy>=1.26",
-    "openai-codex==0.155.1",
+    "openai-codex==0.161.0",
     "python-chess==1.999",
     "PyYAML>=6.0,<7",
     "scipy>=1.14,<2",
@@ -18,7 +18,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-profiling = ["matplotlib>=3.9,<4"]
 cuda = ["torch>=2.8; (sys_platform == 'win32' or sys_platform == 'linux') and (platform_machine == 'AMD64' or platform_machine == 'x86_64')"]
 
 [tool.uv]

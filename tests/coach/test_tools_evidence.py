@@ -1,5 +1,6 @@
 """Offline coverage for preparation, one-response batches, and usage deltas."""
 import io
+from copy import deepcopy
 import json
 import tempfile
 import unittest
@@ -17,7 +18,7 @@ from analysis.game.pipeline import analyze_game
 from analysis.game.summary import compact_summary
 from coach.agent_codex import CodexChessSession
 from coach.agent_budget import CoachingLimitError, RunBudget
-from tests.coach.fixtures import FakeEngines, ScriptedCodex
+from tests.coach.fixtures import FakeAnalysisSession, ScriptedCodex
 
 
 class PreparedEvidenceTests(unittest.TestCase):
@@ -25,23 +26,34 @@ class PreparedEvidenceTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.engines = FakeEngines()
-        self.addCleanup(self.engines._temp.cleanup)
+        self.session = FakeAnalysisSession()
+        self.addCleanup(self.session._temp.cleanup)
         game = chess.pgn.read_game(io.StringIO('1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *'))
-        self.analysis = analyze_game(game, self.engines, 'white', 1400, progress=lambda _: None)
+        self.analysis = analyze_game(game, self.session, actual_elo=1400, progress=lambda _: None)
 
     def library(self, max_calls=20):
-        return ChessTools(self.analysis, self.engines, self.root, max_calls=max_calls)
+        return ChessTools(self.analysis, self.session, self.root, side='white', max_calls=max_calls)
 
     def test_first_model_response_can_finish_report_without_discovery_calls(self):
         model = ScriptedCodex()
         model.index = 5  # Return a complete report using the supplied diagrams.
+        before = deepcopy(self.analysis)
         with patch('analysis.move_hints.move_flags', side_effect=AssertionError('Flags must be reused from analysis')):
-            report = model.run(self.analysis, self.engines, self.root)
+            report = model.run(self.analysis, self.session, self.root, side='white')
         self.assertEqual(model.index, 6)
         self.assertIn('## Exercises', report)
         self.assertEqual(self.analysis['agent_run']['investigated_plies'], [1, 3, 5])
+        self.assertEqual({key: value for key, value in self.analysis.items() if key != 'agent_run'}, before)
+        public = json.loads((self.root/'analysis.json').read_text(encoding='utf-8'))
+        self.assertEqual(public['coaching'], {})
+        self.assertEqual(public['game'], before['game'])
+        self.assertEqual(public['headers'], before['headers'])
         initial = json.loads((self.root/'initial_evidence.json').read_text(encoding='utf-8'))
+        self.assertNotIn('headers', initial)
+        self.assertNotIn('player', initial)
+        self.assertEqual(initial['game']['white']['elo'], 1400)
+        self.assertIsNone(initial['game']['white']['name'])
+        self.assertIsNone(initial['game']['result'])
         self.assertEqual(len(initial['initial_evidence']), 3)
         self.assertEqual([w['target_ply'] for w in initial['leadup_context']['windows']],[1,3,5])
         self.assertEqual([m['ply'] for m in initial['leadup_context']['moves']],[1,2,3,4])
@@ -56,7 +68,7 @@ class PreparedEvidenceTests(unittest.TestCase):
             row['stage'] = {1:'opening', 3:'middlegame', 5:'endgame'}.get(row['ply'], 'opening')
         before = json.dumps(self.analysis, sort_keys=True)
         with patch('analysis.move_hints.move_flags', side_effect=AssertionError('Summary must only read saved data')):
-            summary = compact_summary(self.analysis)
+            summary = compact_summary(self.analysis, 'white')
         self.assertEqual({m['stage'] for m in summary['critical_moments']}, {'opening','middlegame','endgame'})
         self.assertEqual(json.dumps(self.analysis, sort_keys=True), before)
         self.assertTrue(all(m['flags'] == [] for m in summary['critical_moments']))
@@ -75,7 +87,7 @@ class PreparedEvidenceTests(unittest.TestCase):
         batch = json.loads(response['contentItems'][0]['text'])['results']
         self.assertEqual([r['index'] for r in batch],[0,1])
         self.assertEqual(batch[0]['result']['candidate']['stockfish']['move'],'d2d4')
-        self.assertEqual(batch[1]['result']['fen'], self.engines.board(['e2e4','e7e5','b1c3']).fen())
+        self.assertEqual(batch[1]['result']['fen'], self.session.board(['e2e4','e7e5','b1c3']).fen())
         self.assertEqual(len(library.invocations),2)
 
     def test_batch_rejects_invalid_schema_before_work_and_budget_cannot_be_bypassed(self):
@@ -101,7 +113,7 @@ class PreparedEvidenceTests(unittest.TestCase):
 
     def test_batch_search_bounds_are_checked_before_any_child_runs(self):
         library = self.library()
-        for movetime in (0, self.engines.limits.max_ms + 1):
+        for movetime in (0, self.session.limits.max_ms + 1):
             with self.subTest(movetime=movetime), self.assertRaises(ValueError):
                 library.call('investigate_batch', {'requests': [
                     {'tool': 'get_position', 'arguments': {'ply': 1}},
@@ -114,7 +126,7 @@ class PreparedEvidenceTests(unittest.TestCase):
         library = self.library()
         initial = json.loads(prepare_initial_evidence(library))
         sample = initial['initial_evidence'][0]
-        self.engines.sf = Mock(side_effect=AssertionError('No repeated search'))
+        self.session.sf = Mock(side_effect=AssertionError('No repeated search'))
         repeat = library.call('compare_played_vs_candidate',
             {'ply':sample['ply'],'candidate':sample['candidate']['stockfish']['move']})
         self.assertEqual(repeat['result_id'],sample['result_id'])

@@ -18,6 +18,7 @@ class ProfilerRoutesTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.enterContext(patch.dict(BACKEND_CONFIG['ANALYSIS'], CACHE_DIR=self.root/'evidence'))
         self.maia, self.stockfish, self.profiler = Mock(), Mock(), Mock()
         self.stockfish._engine = None
         self.profiler.active = False

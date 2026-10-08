@@ -16,20 +16,20 @@ import chess.engine
 import chess.pgn
 import numpy as np
 
-from analysis.game.pipeline import analyze_game, prepare_game_policies
+from analysis.game.pipeline import ANALYSIS_VERSION, analyze_game, prepare_game_policies
 from analysis.position_evaluation import RATINGS, eval_loss, eval_value, stage
 from analysis.game.history import history_at
 from analysis.game.study import load_game
-from analysis.player_rating.parameters import RATINGS as FIT_RATINGS
-from analysis.engine_session import Engines, Limits
-from analysis.cache import JsonCache
+from analysis.accuracy.evidence import RATINGS as ACCURACY_RATINGS
+from analysis.session import AnalysisSession, Limits
+from analysis.cache.storage import JsonCache
 from analysis.game.history import replay
 from coach.agent_runner import run_coach
 from coach.tools_chess import ChessTools
 from coach.coach import CONFIG, codex_model, parser
 
 
-from tests.coach.fixtures import FakeEngines, ScriptedCodex
+from tests.coach.fixtures import FakeAnalysisSession, ScriptedCodex
 
 
 class LocalCoachTests(unittest.TestCase):
@@ -60,43 +60,53 @@ class LocalCoachTests(unittest.TestCase):
 
     def test_full_scan_all_ratings_played_outside_top_five_and_deduplication(self):
         game = self.game('[WhiteElo "1400"]\n[BlackElo "1700"]\n\n1. e4 e5 2. Nf3 Nc6 *')
-        engines = FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        data = analyze_game(game, engines, 'white', 1400, progress=lambda _:None)
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        data = analyze_game(game, session, progress=lambda _:None)
         self.assertEqual(len(data['moves']),4)
         for row in data['moves']:
-            self.assertEqual(set(map(int,row['maia'])),set(RATINGS))
+            self.assertEqual(set(row['maia']), set(map(str, ACCURACY_RATINGS)))
             self.assertEqual(history_at(data, row['ply']),[m.uci() for m in list(game.mainline_moves())[:row['ply']-1]])
-            for rating in row['maia'].values():
-                self.assertEqual(len(rating),5)
-                self.assertTrue(all(m['p'] > 0 for m in rating))
+            for rating in map(str, RATINGS):
+                record = row['maia'][rating]
+                self.assertEqual(set(record), {'moves', 'expected_accuracy', 'absolute_deviation'})
+                self.assertIsInstance(record['expected_accuracy'], float)
+                self.assertIsInstance(record['absolute_deviation'], float)
+                choices = record['moves']
+                self.assertEqual(len(choices),5)
+                self.assertTrue(all(m['p'] > 0 for m in choices))
             self.assertIn(row['played']['move'], [c['move'] for c in row['candidate_moves']])
-        self.assertNotIn('e2e4',[m['move'] for m in data['moves'][0]['maia']['1400']])
-        restricted = [(tuple(h),tuple(roots)) for h,_,_,roots in engines.sf_calls if roots]
+        self.assertNotIn('e2e4',[m['move'] for m in data['moves'][0]['maia']['1400']['moves']])
+        restricted = [(tuple(h),tuple(roots)) for h,_,_,roots in session.sf_calls if roots]
         self.assertEqual(len(set(restricted)),len(restricted))
-        self.assertEqual(data['schema_version'], 4)
+        self.assertEqual(data['schema_version'], ANALYSIS_VERSION)
         for index, row in enumerate(data['moves']):
-            calls = [(own, opponents) for history, own, opponents in engines.pair_calls if len(history) == index]
+            calls = [(own, opponents) for history, own, opponents in session.pair_calls if len(history) == index]
             pairs = [(a, b) for own, opponents in calls for a, b in zip(own, opponents)]
             # Opening decisions also contribute evidence; diagonal policies remain complete.
-            expected = [(r, r) for r in FIT_RATINGS]
+            expected = [(r, r) for r in ACCURACY_RATINGS]
             self.assertTrue(set(expected).issubset(pairs))
             self.assertTrue(all(len(own) <= 42 for own, _ in calls))
             roots = {c['move'] for c in row['candidate_moves']}
-            self.assertEqual(roots, {row['played']['move']} | {m['move'] for moves in row['maia'].values() for m in moves})
+            self.assertEqual(roots, {row['played']['move']} | {
+                m['move'] for rating in map(str, RATINGS) for m in row['maia'][rating]['moves']})
             self.assertTrue(all(set(c['maia_p']) == set(map(str, RATINGS)) for c in row['candidate_moves']))
 
-    def test_default_policy_preparation_reuses_common_cache(self):
+    def test_policy_preparation_uses_predictions_already_prepared_by_the_pipeline(self):
         game = self.game('1. e4 e5 *')
-        engines = FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        data = analyze_game(game, engines, 'white', 1400, progress=lambda _: None)
-        engines.human_pairs = Mock(side_effect=AssertionError('Should reuse diagonal policy cache'))
-        self.assertIsNone(prepare_game_policies(game, data['moves'], engines))
+        session = FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        data = analyze_game(game, session, actual_elo=1400, progress=lambda _: None)
+        session.human_pairs = Mock(side_effect=AssertionError('Should reuse prepared position predictions'))
+        predictions = [[position['maia'][f'maia_kdd_{rating}'] for rating in ACCURACY_RATINGS]
+                       for position in data['positions']]
+        self.assertIsNone(prepare_game_policies(game, data['moves'], predictions[:-1]))
         for row in data['moves']:
-            self.assertEqual(set(row['_rating_policies']), set(FIT_RATINGS))
-        self.assertIsNone(data['played_elo']['white']['estimate'])
-        self.assertIsNone(data['played_elo']['white']['interval'])
+            self.assertEqual(set(row['_policies']), set(map(str, RATINGS)))
+        self.assertEqual(set(data['positions'][0]['maia']),
+                         {f'maia_kdd_{rating}' for rating in ACCURACY_RATINGS})
+        self.assertEqual(data['accuracy_curve']['players']['white']['moves_used'], 1)
+        self.assertEqual(data['accuracy_curve']['players']['white']['average_accuracy'], 100)
 
     def test_signed_loss_white_orientation_and_mates(self):
         self.assertEqual(eval_loss(1., -.2, 'white'), 1.2)
@@ -109,48 +119,49 @@ class LocalCoachTests(unittest.TestCase):
 
     def test_initial_analysis_uses_demo_search_and_keeps_white_mate_perspective(self):
         from tests.analysis.test_stockfish_search import SearchTests, FakeSearch
-        engines = Engines(chess.STARTING_FEN, self.root/'cache', limits=Limits(verify_ms=6000, depth=18))
-        engines.signature = {'test': True}
-        engines.stockfish = SearchTests().engine(incomplete=True)
-        self.addCleanup(engines.close)
-        result = engines.initial_analysis([], 'e2e4', ['d2d4', 'c2c4'])
+        session = AnalysisSession(chess.STARTING_FEN, self.root/'cache', limits=Limits(verify_ms=6000, depth=18))
+        session.engines.signature = {'test': True}
+        session.engines.stockfish = SearchTests().engine(incomplete=True)
+        self.addCleanup(session.close)
+        result = session.initial_analysis([], 'e2e4', ['d2d4', 'c2c4'])
         self.assertEqual(len(result['lines']), 20)
         self.assertEqual(result['search']['budget_seconds'], 6)
         self.assertEqual(result['search']['stop_reason'], 'time')
         self.assertEqual({line['uci']: line['depth'] for line in result['lines']}['e2e4'], 17)
-        calls = engines.stockfish.analysis.call_count
-        self.assertEqual(engines.initial_analysis([], 'e2e4', ['d2d4', 'c2c4']), result)
-        self.assertEqual(engines.stockfish.analysis.call_count, calls)
-        self.assertTrue(all(call.args[1].time <= 6 for call in engines.stockfish.analysis.call_args_list))
+        calls = session.engines.stockfish.analysis.call_count
+        self.assertEqual(session.initial_analysis([], 'e2e4', ['d2d4', 'c2c4']), result)
+        self.assertEqual(session.engines.stockfish.analysis.call_count, calls)
+        self.assertTrue(all(call.args[1].time <= 6 for call in session.engines.stockfish.analysis.call_args_list))
         def mate_search(board, limit, multipv, root_moves=None):
             moves = root_moves or list(board.legal_moves)[:multipv]
             return FakeSearch([{'depth': limit.depth, 'pv': [m],
                                 'score': chess.engine.PovScore(chess.engine.Mate(3), board.turn)} for m in moves])
-        engines.stockfish.analysis.side_effect = mate_search
-        black = engines.initial_analysis(['e2e4'], 'e7e5', ['d7d5'])
+        session.engines.stockfish.analysis.side_effect = mate_search
+        black = session.initial_analysis(['e2e4'], 'e7e5', ['d7d5'])
         self.assertTrue(all(line['mate'] == -3 and line['cp'] is None for line in black['lines']))
 
     def test_joint_batches_preserve_opponents_and_history_in_cache(self):
-        engines = Engines(chess.STARTING_FEN, self.root/'cache')
-        engines.signature = {'test': True}
-        engines.maia = Mock()
+        session = AnalysisSession(chess.STARTING_FEN, self.root/'cache')
+        session.engines.signature = {'test': True}
+        session.engines.maia = Mock()
         def predict(fens, ratings, opponents, *, boards):
             self.assertEqual([m.uci() for m in boards[fens[0]].move_stack], current_history)
-            return [{'policy': {m.uci(): 1/boards[f].legal_moves.count() for m in boards[f].legal_moves}} for f in fens]
-        engines.maia.batch_evaluate.side_effect = predict
+            return [{'policy': {m.uci(): 1/boards[f].legal_moves.count() for m in boards[f].legal_moves},
+                     'value': .5} for f in fens]
+        session.engines.maia.batch_evaluate.side_effect = predict
         own, opponents = [1400]*42, list(range(1400, 1442))
         current_history = ['g1f3','g8f6','b1c3','b8c6']
-        engines.human_pairs(current_history, own, opponents)
-        engines.human_pairs(current_history, own, opponents)
-        self.assertEqual(engines.maia.batch_evaluate.call_count, 1)
-        self.assertEqual(engines.maia.batch_evaluate.call_args.args[2], opponents)
+        session.human_pairs(current_history, own, opponents)
+        session.human_pairs(current_history, own, opponents)
+        self.assertEqual(session.engines.maia.batch_evaluate.call_count, 1)
+        self.assertEqual(session.engines.maia.batch_evaluate.call_args.args[2], opponents)
         current_history = ['b1c3','b8c6','g1f3','g8f6']  # Same FEN, different history.
-        engines.human_pairs(current_history, own, opponents)
-        self.assertEqual(engines.maia.batch_evaluate.call_count, 2)
-        engines.human_pairs(current_history, own, [1500]*42)
-        self.assertEqual(engines.maia.batch_evaluate.call_count, 3)
+        session.human_pairs(current_history, own, opponents)
+        self.assertEqual(session.engines.maia.batch_evaluate.call_count, 2)
+        session.human_pairs(current_history, own, [1500]*42)
+        self.assertEqual(session.engines.maia.batch_evaluate.call_count, 3)
         with self.assertRaises(ValueError):
-            engines.human_pairs(current_history, own+[1400], opponents+[1400])
+            session.human_pairs(current_history, own+[1400], opponents+[1400])
 
     def test_engine_lifecycle_history_cache_and_bounded_root_search(self):
         checkpoint=self.root/'model.pt'; checkpoint.write_bytes(b'fixture')
@@ -171,31 +182,35 @@ class LocalCoachTests(unittest.TestCase):
             context.__exit__=Mock(return_value=False)
             return context
         sf.analysis.side_effect=search
-        with patch('engine.maia.MaiaPolicy',return_value=model) as ctor, patch('analysis.engine_session.start_stockfish',return_value=sf) as start:
-            with Engines(chess.STARTING_FEN,self.root/'cache',stockfish_path=executable) as engines:
+        with patch('engine.maia.MaiaPolicy',return_value=model) as ctor, patch('engine.runtime.start_stockfish',return_value=sf) as start:
+            with AnalysisSession(chess.STARTING_FEN,self.root/'cache',stockfish_path=executable) as session:
+                ctor.assert_called_once()
+                model.load.assert_not_called()
+                model.batch_evaluate.assert_not_called()
+                start.assert_not_called()
                 a=['g1f3','g8f6','b1c3','b8c6']; b=['b1c3','b8c6','g1f3','g8f6']
-                self.assertEqual(engines.board(a).fen(),engines.board(b).fen())
-                engines.human(a,[1400],1700); engines.human(a,[1400],1700); engines.human(b,[1400],1700)
+                self.assertEqual(session.board(a).fen(),session.board(b).fen())
+                session.human(a,[1400],1700); session.human(a,[1400],1700); session.human(b,[1400],1700)
                 self.assertEqual(model.batch_evaluate.call_count,2)
-                self.assertEqual([m.uci() for m in model.batch_evaluate.call_args.kwargs['boards'][engines.board(b).fen()].move_stack],b)
-                first=engines.sf(['e2e4'],100,multipv=1,root_moves=['e7e5'])
+                self.assertEqual([m.uci() for m in model.batch_evaluate.call_args.kwargs['boards'][session.board(b).fen()].move_stack],b)
+                first=session.sf(['e2e4'],100,multipv=1,root_moves=['e7e5'])
                 self.assertEqual(first['lines'][0]['cp'],-45)
                 self.assertEqual(first['lines'][0]['depth'],8)
-                engines.sf(['e2e4'],100,multipv=1,root_moves=['e7e5'])
+                session.sf(['e2e4'],100,multipv=1,root_moves=['e7e5'])
                 self.assertEqual(sf.analysis.call_count,1)
-                with self.assertRaises(ValueError): engines.sf([],engines.limits.max_ms + 1)
-                with self.assertRaises(ValueError): engines.sf([],100,root_moves=['e2e5'])
-                ctor.assert_called_once(); model.load.assert_called_once(); start.assert_called_once()
+                with self.assertRaises(ValueError): session.sf([],session.limits.max_ms + 1)
+                with self.assertRaises(ValueError): session.sf([],100,root_moves=['e2e5'])
+                ctor.assert_called_once(); model.load.assert_not_called(); start.assert_called_once()
                 self.assertEqual(start.call_args.kwargs['timeout'], CONFIG['STOCKFISH']['START_TIMEOUT_SECONDS'])
             sf.quit.assert_called_once()
 
     def test_actual_tool_calling_agent_extends_history_diagrams_and_private_trace(self):
         game=self.game('[WhiteElo "1400"]\n[BlackElo "1500"]\n\n1. e4 e5 2. Nf3 Nc6 *')
-        engines=FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        data=analyze_game(game,engines,'white',1400,progress=lambda _:None)
+        session=FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        data=analyze_game(game,session,progress=lambda _:None)
         output=self.root/'output'
-        report=ScriptedCodex().run(data,engines,output,max_model_responses=12)
+        report=ScriptedCodex().run(data,session,output, side='white',max_model_responses=12)
         self.assertIn('## Exercises',report)
         self.assertTrue((output/'coaching.md').is_file())
         self.assertTrue(any((output/'positions').glob('*.svg')))
@@ -205,21 +220,21 @@ class LocalCoachTests(unittest.TestCase):
         events = [json.loads(line) for line in trace.splitlines()]
         self.assertEqual(len([e for e in events if e['phase'] == 'initial']), 2)
         self.assertEqual([e['tool'] for e in events if e['phase'] == 'followup'],['get_game_analysis','get_position','maia_compare','compare_played_vs_candidate','compare_played_vs_candidate'])
-        self.assertTrue(any(history[:3]==['e2e4','e7e5','b1c3'] and len(history)>=4 for history,_,_ in engines.human_calls))
-        library=ChessTools(data,engines,self.root/'unchecked')
+        self.assertTrue(any(history[:3]==['e2e4','e7e5','b1c3'] and len(history)>=4 for history,_,_ in session.human_calls))
+        library=ChessTools(data,session,self.root/'unchecked', side='white')
         with self.assertRaises(ValueError): validate_report(library, report)
         with self.assertRaises(ValueError): library.call('python',{'code':'print(1)'})
 
     def test_removed_provider_and_decorated_tool_schemas(self):
         game=self.game('[WhiteElo "1400"]\n[BlackElo "1500"]\n\n1. e4 e5 2. Nf3 Nc6 *')
-        engines=FakeEngines()
-        self.addCleanup(engines._temp.cleanup)
-        data=analyze_game(game,engines,'white',1400,progress=lambda _:None)
+        session=FakeAnalysisSession()
+        self.addCleanup(session._temp.cleanup)
+        data=analyze_game(game,session,progress=lambda _:None)
         with self.assertRaises(TypeError):
-            run_coach(data,engines,self.root/'removed',provider='removed')
-        library=ChessTools(data,engines,self.root/'tools')
+            run_coach(data,session,self.root/'removed', side='white',provider='removed')
+        library=ChessTools(data,session,self.root/'tools', side='white')
         tools={t.name:t for t in library.tools}
-        self.assertEqual(len(tools),9)
+        self.assertEqual(len(tools),11)
         self.assertEqual(tools['maia_compare'].input_schema['properties']['ratings']['items']['type'],'integer')
         self.assertEqual(tools['get_position'].input_schema['properties']['line']['anyOf'][0]['items']['type'],'string')
         self.assertIn({'type':'null'}, tools['get_position'].input_schema['properties']['line']['anyOf'])
@@ -233,11 +248,11 @@ class LocalCoachTests(unittest.TestCase):
             loaded = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'coach/settings.py'))['CONFIG']
             self.assertEqual(loaded,CONFIG)
             with patch.dict(COACH_CONFIG['ANALYSIS'], STOCKFISH_THREADS_PER_WORKER=6, STOCKFISH_HASH_MB_PER_WORKER=384), patch.dict(COACH_CONFIG['ANALYSIS']['STOCKFISH_EVALUATION'], MAX_DEPTH=15), patch.dict(COACH_CONFIG['STOCKFISH'], EXECUTABLE='configured-stockfish'), patch.dict(COACH_CONFIG['MAIA'], CHECKPOINT='configured-maia', DEVICE='cpu'), patch.dict(COACH_CONFIG['ANALYSIS'], CACHE_DIR=self.root/'cache'):
-                args=parser().parse_args(['input.pgn','--side','white','--elo','1400'])
+                args=parser().parse_args(['input.pgn','--side','white','--elo','1400','--rating-scale','lb'])
                 self.assertEqual((args.threads_per_worker,args.hash_mb,args.stockfish_path,args.maia_checkpoint),
                                  (6,384,'configured-stockfish','configured-maia'))
                 self.assertEqual((args.depth,args.device,args.cache_dir),(15,'cpu',self.root/'cache'))
-                args=parser().parse_args(['input.pgn','--side','white','--elo','1400','--threads','2','--hash-mb-per-worker','256','--depth','12'])
+                args=parser().parse_args(['input.pgn','--side','white','--elo','1400','--rating-scale','lb','--threads-per-worker','2','--hash-mb-per-worker','256','--depth','12'])
                 self.assertEqual((args.threads_per_worker,args.hash_mb,args.depth),(2,256,12))
 
 

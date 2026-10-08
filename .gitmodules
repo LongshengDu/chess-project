@@ -10,3 +10,7 @@
 	path = deps/maia-platform-frontend
 	url = https://github.com/csslab/maia-platform-frontend.git
 	shallow = true
+[submodule "deps/lichess-openings"]
+	path = deps/lichess-openings
+	url = https://github.com/lichess-org/chess-openings.git
+	shallow = true

@@ -36,7 +36,7 @@ def check_sections(answer):
 def validate_report(library, answer):
     """Accept reports with locally checked decision coverage and board images."""
     from analysis.game.summary import decision_rows
-    decisions = decision_rows(library.analysis)
+    decisions = decision_rows(library.analysis, library.side)
     investigated = [row for row in decisions if row['ply'] in library.investigated]
     needed = min(3, len(decisions))
     missing_stages = {row['stage'] for row in decisions} - {row['stage'] for row in investigated}

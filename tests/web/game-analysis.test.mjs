@@ -22,8 +22,57 @@ const collect = async run => {
   return events;
 };
 
-test('full-game stream preserves split UTF-8, out-of-order positions and fitted ratings', async t => {
-  const analysis = {positions:[], played_elo:{white:{estimate:1800}, black:{estimate:1500}}};
+function transformedSource(relativePath) {
+  const filename = fileURLToPath(new URL(`../../deps/maia-platform-frontend/src/${relativePath}`, import.meta.url));
+  const adapter = viteConfig.plugins.find(plugin => plugin.name === 'local-analysis-adapters');
+  return ts.createSourceFile(filename, adapter.transform(readFileSync(filename, 'utf8'), filename.replaceAll('\\', '/')),
+    ts.ScriptTarget.Latest, true);
+}
+
+function findSyntax(source, predicate) {
+  let match;
+  const visit = node => {
+    if (predicate(node)) match = node;
+    if (!match) ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(match, 'expected transformed syntax is present');
+  return match;
+}
+
+test('analysis presets list every configured depth and budget without upstream hardcoded depths', () => {
+  const source = transformedSource('components/Analysis/AnalysisConfigModal.tsx');
+  const expression = findSyntax(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'depthOptions').initializer.getText(source);
+  const evaluate = searchConfig => JSON.parse(JSON.stringify(vm.runInNewContext(`(${expression})`,
+    {searchConfig, bounded:searchConfig?.strategy === 'bounded'})));
+  const config = {strategy:'bounded',budgets:{22:5,16:1,18:2.5},max_budgets:{16:2,18:5,22:10}};
+  const options = evaluate(config);
+  assert.deepEqual(options.map(option=>option.value), [16,18,22]);
+  assert.deepEqual(options.map(option=>option.label), ['Fast (up to d16)','Balanced (up to d18)','Deep (up to d22)']);
+  assert.equal(options[0].description, 'Up to 1 second of search per position');
+  assert.equal(options[2].description, 'Up to 5 seconds of search per position');
+  assert.equal(evaluate({...config,strategy:'staged'})[2].description, 'Depth target with a 10-second search limit');
+  assert.deepEqual(evaluate(undefined), []);
+  assert.deepEqual(evaluate({...config,budgets:{20:3,24:6,28:8,30:10}}).map(option=>option.value),[20,24,28,30]);
+});
+
+test('completed backend observations replace higher achieved-depth browser data', () => {
+  const source = transformedSource('types/node.ts');
+  const method = findSyntax(source, node => ts.isMethodDeclaration(node) && node.name.getText(source) === 'addStockfishAnalysis');
+  const compiled = ts.transpileModule(`(function(stockfishEval, activeModel) ${method.body.getText(source)})`,
+    {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const apply = vm.runInNewContext(compiled);
+  const older = {depth:24,target_depth:24,budget_seconds:4,complete:true};
+  const incoming = {depth:10,target_depth:28,budget_seconds:8,complete:true};
+  const node = {_analysis:{stockfish:older},_children:[]};
+  apply.call(node,incoming);
+  assert.equal(node._analysis.stockfish,incoming);
+  apply.call(node,{depth:8,complete:false});
+  assert.equal(node._analysis.stockfish,incoming,'shallower incomplete progress does not replace the complete result');
+});
+
+test('full-game stream preserves split UTF-8, out-of-order positions and accuracy curve', async t => {
+  const analysis = {positions:[], accuracy_curve:{rating_scale:'lb', ratings:[600,2600], expected_accuracy:[70,90]}};
   const expected = [{type:'progress', message:'Maia choices…'},
     {type:'position', index:2, position:{fen:'last'}},
     {type:'position', index:0, position:{fen:'first'}}, {type:'complete', analysis}];
@@ -183,9 +232,9 @@ function hookHarness(nodes, {gameId='game', profiling=false} = {}) {
   return {hook, states, moved, errors, batches, tree, get updates() { return updates; }};
 }
 
-test('hook consumes one full-game job, retains ratings and never posts partial cache data', async t => {
+test('hook consumes one full-game job, retains accuracy curve and never posts partial cache data', async t => {
   const positions = [position('first', 0), position('last', 1)];
-  const analysis = {positions, played_elo:{white:{estimate:1750}, black:{estimate:1650}}};
+  const analysis = {positions, accuracy_curve:{rating_scale:'lb', ratings:[600,2600], expected_accuracy:[70,90]}};
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push({url, body:JSON.parse(options.body)});
@@ -210,7 +259,7 @@ test('unsaved trees create a PGN once and completed-cache streams need no positi
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push({url, body:JSON.parse(options.body)});
     return url.endsWith('/games') ? new Response(JSON.stringify({game_id:'created'}))
-      : streamResponse([{type:'complete', analysis:{positions:[position('first',0)], played_elo:{}}}]);
+      : streamResponse([{type:'complete', analysis:{positions:[position('first',0)], accuracy_curve:{}}}]);
   });
   const view = hookHarness([node('first')], {gameId:null});
   await view.hook.startAnalysis(12);
@@ -334,7 +383,7 @@ test('autosave keeps interactive and cancelled work but skips the completed serv
   tree.positions = [position('first', 0), position('next', 1), position('last', 2)];
   await render(2).saveAnalysis();
   assert.equal(posts.length, 1, 'no autosave during the server job');
-  tree.fullAnalysis = {positions:tree.positions, played_elo:{white:{estimate:1700}}};
+  tree.fullAnalysis = {positions:tree.positions, accuracy_curve:{rating_scale:'lb', expected_accuracy:[70,90]}};
   batch = false;
   await render(3).saveAnalysis();
   assert.equal(posts.length, 1, 'the server already persisted the complete result');
@@ -350,7 +399,7 @@ test('autosave keeps interactive and cancelled work but skips the completed serv
   batch = true;
   tree.positions = [...tree.positions, position('complete', 5)];
   render(6);
-  tree.fullAnalysis = {positions:tree.positions, played_elo:{white:{estimate:1750}}};
+  tree.fullAnalysis = {positions:tree.positions, accuracy_curve:{rating_scale:'lb', expected_accuracy:[70,90]}};
   batch = false;
   render(7);
   releaseSave();

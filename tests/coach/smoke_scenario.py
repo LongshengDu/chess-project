@@ -11,8 +11,7 @@ from .smoke_evidence import smoke_evidence
 
 
 def validate_smoke_report(library, answer):
-    selected = library.analysis['selected_player']['side']
-    if not any(row['ply'] in library.investigated for row in decision_rows(library.analysis)):
+    if not any(row['ply'] in library.investigated for row in decision_rows(library.analysis, library.side)):
         raise ValueError('Investigate one selected-player decision before writing the smoke report.')
     if not isinstance(answer, str) or len(answer) < 80:
         raise ValueError('Return a complete short Markdown report.')
@@ -23,11 +22,11 @@ def validate_smoke_report(library, answer):
 
 
 def prepare_smoke_task(library):
-    analysis, engines = library.analysis, library.engines
-    summary = compact_summary(analysis)
+    analysis, session = library.analysis, library.session
+    summary = compact_summary(analysis, library.side)
     summary['critical_moments'] = summary['critical_moments'][:1]
     summary['overview'] = []
-    eligible = decision_rows(analysis)
+    eligible = decision_rows(analysis, library.side)
     if not eligible:
         raise ValueError('A smoke report requires one selected-player position with an alternative legal move.')
     chosen = next((row for moment in summary['critical_moments'] for row in eligible if row['ply'] == moment['ply']), eligible[0])
@@ -35,7 +34,7 @@ def prepare_smoke_task(library):
     candidate = min(roots, key=lambda item: (
         item[1]['loss'] if item[1]['loss'] is not None else float('inf'),
         -sum(item[1]['maia_p'].values())))[0] if roots else next(
-            move.uci() for move in engines.board(history_at(analysis, chosen['ply'])).legal_moves if move.uci() != chosen['played']['move'])
+            move.uci() for move in session.board(history_at(analysis, chosen['ply'])).legal_moves if move.uci() != chosen['played']['move'])
     position = library.call('get_position', {'ply': chosen['ply']})
     comparison = library.call('compare_played_vs_candidate', {'ply': chosen['ply'], 'candidate': candidate})
     evidence = smoke_evidence(position, comparison)
@@ -45,11 +44,11 @@ def prepare_smoke_task(library):
             + json.dumps(evidence, ensure_ascii=False, separators=(',', ':')))
 
 
-def run_smoke(analysis, engines, output_dir, *, model_id=None, client_factory=None):
+def run_smoke(analysis, session, output_dir, *, side, model_id=None, client_factory=None):
     request = CoachingRequest(
         instructions=Path(__file__).with_name('prompt-smoke.txt').read_text(encoding='utf-8'),
         prepare_task=prepare_smoke_task, validate_report=validate_smoke_report,
         report_name='coaching-smoke', max_attempts=1, allow_tools=False,
         max_tool_calls=config.TOOL_CALLS, token_budget=config.TOKEN_BUDGET, run_timeout=config.TIMEOUT)
-    return run_coach(analysis, engines, output_dir, model_id=model_id, client_factory=client_factory,
+    return run_coach(analysis, session, output_dir, side=side, model_id=model_id, client_factory=client_factory,
                      max_model_responses=1, max_tokens=config.MAX_OUTPUT_TOKENS, request=request)

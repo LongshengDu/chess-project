@@ -73,13 +73,15 @@ def fact_changes(before, after):
     return changes
 
 
-def leadup_context(analysis, plies, lookback_plies=8):
+def leadup_context(analysis, plies, lookback_plies=8, *, side):
     """Deduplicate overlapping actual-game windows; targets are BEFORE their moves."""
     if type(lookback_plies) is not int or not 1 <= lookback_plies <= 16:
         raise ValueError('lookback_plies must be 1–16.')
     windows, positions, moves = [], {}, {}
     rows = analysis['moves']
-    selected_side = analysis['selected_player']['side']
+    if side not in ('white', 'black'):
+        raise ValueError('Coaching side must be white or black.')
+    selected_side = side
     for ply in dict.fromkeys(plies):
         history_at(analysis, ply)  # Validate the reference, including N+1.
         start = max(1, ply-lookback_plies)

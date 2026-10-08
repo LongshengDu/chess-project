@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import get_args, get_origin, get_type_hints
 
+from analysis.accuracy.evidence import RATINGS
+
 
 def _schema(annotation):
     args, origin = get_args(annotation), get_origin(annotation)
@@ -23,6 +25,8 @@ def _schema(annotation):
 
 
 def _validate(value, schema, path):
+    if 'enum' in schema and value not in schema['enum']:
+        raise ValueError(f'{path} must be one of {schema["enum"]}.')
     if 'anyOf' in schema:
         for option in schema['anyOf']:
             try:
@@ -46,6 +50,8 @@ def _validate(value, schema, path):
         if 'maximum' in schema and value > schema['maximum']:
             raise ValueError(f'{path} must be at most {schema["maximum"]}.')
     if kind == 'array':
+        if len(value) < schema.get('minItems', 0) or len(value) > schema.get('maxItems', math.inf):
+            raise ValueError(f'{path} has an invalid number of items.')
         for index, item in enumerate(value):
             _validate(item, schema['items'], f'{path}[{index}]')
     if kind == 'object' and 'properties' in schema:
@@ -91,7 +97,7 @@ def chess_tool(function):
 
 
 def chess_tools(library):
-    """Bind the nine typed chess tools to one investigation session."""
+    """Bind typed chess investigations and saved accuracy queries to one session."""
     @chess_tool
     def get_leadup(ply: int, lookback_plies: int = 8) -> dict:
         """Trace the actual moves BEFORE a position, saved evals/flags and factual positional changes. To go farther back, call again at from_ply. Use earlier plies with comparison/branch tools to test prevention ideas.
@@ -115,6 +121,38 @@ def chess_tools(library):
     def get_game_analysis() -> dict:
         """Read the compact overview; do not repeat it when already supplied."""
         return library.call('get_game_analysis', {})
+
+    @chess_tool
+    def compare_position_difficulty(ratings: list[int] | None = None, stage: str | None = None,
+                                    from_ply: int = 1, to_ply: int | None = None) -> dict:
+        """Compare saved White Maia vs Black Maia expectations and each side's actual vs Maia accuracy, at the SAME Maia ratings, without engines. Returns each side's expectation, absolute deviation, actual arithmetic accuracy and actual_minus_expected, plus White-minus-Black expected differences. Higher expectation suggests easier quality preservation, not advantage or win chance. Forced moves excluded; null means unavailable. Follow up with leadup/human lines to explain why.
+
+        Args:
+            ratings: One to six native Lichess Blitz anchors, 600–2600 in steps of 100; null uses [1600]. Both rating inputs use each anchor.
+            stage: Opening, middlegame or endgame in lowercase; null includes all stages.
+            from_ply: First included game-relative half-move, one-based.
+            to_ply: Last included half-move, inclusive; null means end of game.
+        """
+        return library.call('compare_position_difficulty', dict(
+            ratings=ratings, stage=stage, from_ply=from_ply, to_ply=to_ply))
+
+    @chess_tool
+    def get_accuracy_by_move(maia_elo: int = 1600, side: str | None = None, stage: str | None = None,
+                             from_ply: int = 1, to_ply: int | None = None,
+                             order: str = 'chronological', limit: int = 12) -> dict:
+        """Read saved per-move expected/actual accuracy and deviation without engines. Compare White Maia vs Black Maia by move_number, or each side's actual vs expected accuracy. move_number is the PGN fullmove number shared by White and Black; each value describes that side's own decision, not a pair average. ply is a separate game-relative half-move index. Excludes forced moves without renumbering. Order by expectation, not player errors; paginate chronological results with next_from_ply. Use leadup/position and human branches to explain the chess.
+
+        Args:
+            maia_elo: Native saved anchor 600–2600 in steps of 100; default 1600, equal-rating conditioning.
+            side: white or black; null includes both.
+            stage: opening, middlegame or endgame; null includes all stages.
+            from_ply: First included game-relative half-move, one-based.
+            to_ply: Last included half-move, inclusive; null means end of game.
+            order: chronological, hardest (lowest expectation first), or easiest (highest first).
+            limit: Maximum positions returned, 1–40; default 12.
+        """
+        return library.call('get_accuracy_by_move', dict(maia_elo=maia_elo, side=side, stage=stage,
+            from_ply=from_ply, to_ply=to_ply, order=order, limit=limit))
 
     @chess_tool
     def get_position(ply: int, line: list[str] | None = None) -> dict:
@@ -194,7 +232,21 @@ def chess_tools(library):
         return library.call('compare_played_vs_candidate', dict(ply=ply, candidate=candidate))
 
     stockfish_analyze.input_schema['properties']['movetime_ms'].update(
-        minimum=1, maximum=library.engines.limits.max_ms,
-        description=f'Search milliseconds, 1–{library.engines.limits.max_ms}; normally {library.engines.limits.verify_ms}.')
+        minimum=1, maximum=library.session.limits.max_ms,
+        description=f'Search milliseconds, 1–{library.session.limits.max_ms}; normally {library.session.limits.verify_ms}.')
+    for tool in (compare_position_difficulty, get_accuracy_by_move):
+        properties = tool.input_schema['properties']
+        properties['stage']['enum'] = [None, 'opening', 'middlegame', 'endgame']
+        properties['from_ply']['minimum'] = 1
+        properties['to_ply']['anyOf'][0]['minimum'] = 1
+    rating_list = compare_position_difficulty.input_schema['properties']['ratings']['anyOf'][0]
+    rating_list.update(minItems=1, maxItems=6)
+    rating_list['items']['enum'] = list(RATINGS)
+    accuracy_properties = get_accuracy_by_move.input_schema['properties']
+    accuracy_properties['maia_elo']['enum'] = list(RATINGS)
+    accuracy_properties['side']['enum'] = [None, 'white', 'black']
+    accuracy_properties['order']['enum'] = ['chronological', 'hardest', 'easiest']
+    accuracy_properties['limit'].update(minimum=1, maximum=40)
     return [get_game_analysis, get_position, maia_analyze, maia_compare, stockfish_analyze,
-            explore_candidate, compare_played_vs_candidate, investigate_batch, get_leadup]
+            explore_candidate, compare_played_vs_candidate, investigate_batch, get_leadup,
+            compare_position_difficulty, get_accuracy_by_move]

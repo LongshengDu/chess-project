@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from analysis.cache import JsonCache, write_json
+from analysis.cache.storage import JsonCache, write_json
 
 
 class CacheTests(unittest.TestCase):
@@ -44,7 +44,7 @@ class CacheTests(unittest.TestCase):
                     raise PermissionError('another writer is publishing')
                 return replace(source, destination)
 
-            with patch.object(Path, 'replace', publish), patch('analysis.cache.time.sleep') as sleep:
+            with patch.object(Path, 'replace', publish), patch('analysis.cache.storage.time.sleep') as sleep:
                 write_json(target, {'complete': True})
             self.assertEqual(json.loads(target.read_text(encoding='utf-8')), {'complete': True})
             self.assertEqual(len(attempts), 2)

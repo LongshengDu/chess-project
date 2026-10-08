@@ -11,10 +11,10 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from analysis.game.pipeline import analyze_game
-from analysis.position_evaluation import header_elo
+from analysis.cache.artifacts import AnalysisStore
 from analysis.game.study import load_game
-from analysis.engine_session import Engines
-from analysis.cache import write_json
+from analysis.session import AnalysisSession
+from analysis.cache.storage import write_json
 from coach.settings import CONFIG
 
 
@@ -32,10 +32,10 @@ def main(argv=None):
     started = time.perf_counter()
     stages = {'maia_seconds':0., 'maia_calls':0, 'maia_rows':0, 'stockfish_seconds':0.}
     positions = []
-    with Engines(game.board().fen(), args.cache_dir,analysis_workers=args.workers,
-                 threads_per_worker=args.threads_per_worker) as engines:
+    with AnalysisSession(game.board().fen(), args.cache_dir,analysis_workers=args.workers,
+                 threads_per_worker=args.threads_per_worker) as session:
         load_seconds = time.perf_counter()-started
-        original_maia = engines.maia.batch_evaluate
+        original_maia = session.engines.maia.batch_evaluate
         def maia(*a, **kw):
             tick = time.perf_counter()
             result = original_maia(*a, **kw)
@@ -43,8 +43,8 @@ def main(argv=None):
             stages['maia_calls'] += 1
             stages['maia_rows'] += len(a[0])
             return result
-        engines.maia.batch_evaluate = maia
-        original_scan = engines.initial_analysis
+        session.engines.maia.batch_evaluate = maia
+        original_scan = session.initial_analysis
         def scan(history, *a, **kw):
             tick = time.perf_counter()
             result = original_scan(history, *a, **kw)
@@ -52,16 +52,16 @@ def main(argv=None):
             positions.append({'ply':len(history)+1, 'wall_seconds':elapsed,
                 'best_move':result['best_move'], 'search':result['search']})
             return result
-        engines.initial_analysis = scan
+        session.initial_analysis = scan
         analysis_started = time.perf_counter()
-        analysis = analyze_game(game, engines, 'white', header_elo(game.headers,'White'),
+        analysis = analyze_game(game, session,
                                 progress=lambda message:print(message,flush=True),
-                                rating_output_dir=args.output_dir/'player-rating')
+                                accuracy_output_dir=args.output_dir)
         elapsed = time.perf_counter()-analysis_started
-        stats = dict(engines.stats)
-        runtime = {'device':engines.signature['device'], **engines.last_analysis_execution}
+        stats = dict(session.stats)
+        runtime = {'device':session.engines.signature['device'], **session.last_analysis_execution}
         runtime['total_threads'] = runtime['workers'] * runtime['threads_per_worker']
-    write_json(args.output_dir/'analysis.json',analysis)
+    AnalysisStore(args.cache_dir).save(args.output_dir/'analysis.json', analysis)
     # Sum after all workers join; this is workload time, not game wall time.
     stages['stockfish_seconds'] = sum(position['wall_seconds'] for position in positions)
     write_json(args.output_dir/'timing.json',{'pgn':str(args.pgn),'plies':len(analysis['moves']),

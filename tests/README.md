@@ -1,320 +1,108 @@
 # Tests and development checks
 
-All first-party regression suites, fixtures and development tools live under
-`tests/`, grouped by component. This is their shared guide; component test
-directories do not have separate READMEs. Dependency-owned tests remain in `deps/`.
+First-party regression suites, fixtures, experiments and benchmarks live under `tests/`, grouped by component. This is their shared guide; test subdirectories have no separate READMEs. Use the [root installation](../README.md#install-and-run) and shared Python environment. Dependency-owned tests remain in `deps/`.
 
 ## Suites
 
 | Directory | Coverage |
 | --- | --- |
-| `analysis/` | PGN/FEN, shared full-game results, search budgets, hints, accuracy, rating estimators, profiling and atomic caches. |
-| `backend/` | Configuration, startup/cleanup, HTTP analysis and play, persistence, cancellation and full-game publication. |
+| `analysis/` | PGN/FEN, shared game analysis, search budgets, hints, accuracy/curves, profiling, prepared artifacts and concurrent caches. |
+| `backend/` | Configuration, lifecycle, HTTP analysis/play, persistence, cancellation and full-game publication. |
 | `engine/` | Maia batching/history, Stockfish limits and worker concurrency, asset verification and cleanup. |
-| `coach/` | Evidence, chess investigations, report validation, diagrams, agent budgets, progress and output paths. |
-| `web/` | Build tooling, routing, frontend adapters, streaming, terminal cache restoration, autosave and upstream compatibility. |
+| `coach/` | Compact evidence, investigations, report validation, diagrams, budgets, progress and output paths. |
+| `web/` | Build tooling, routing, adapters, streaming, cache restoration, autosave and upstream compatibility. |
 
-Shared-analysis checks cover identical web/coach evidence and ratings, cancellation
-without disrupting unrelated jobs, and history-sensitive caching. Rating checks
-use frozen evidence and mathematical invariants. For new estimators, follow the
-[extension contract](../analysis/README.md#player-rating-estimator-interface).
-Benchmark games are evaluation-only. Neither their labels nor their unlabeled
-positions, policies, quality distributions or observed statistics may supply
-training, calibration, priors or population assets. Excluding the current target
-while using the remaining benchmark games is still prohibited. Synthetic unit
-fixtures and current-game inference remain valid; test fixtures must never become
-runtime dependencies. Commercial references enter scoring only after predictions.
+Regressions exercise shared production interfaces with synthetic inputs, fake engines, scripted model responses, temporary storage, mocked downloads and Flask's in-process client. Ordinary checks do not spend model tokens, download assets, start listening servers or perform frontend builds. Accuracy tests distinguish native Maia expectations, arithmetic player accuracy and Lichess accuracy; cache tests cover immutable observations, history/rating compatibility and strict reconstruction without engines.
 
-**Withdrawn research:** earlier population-based rating comparisons reused these
-benchmark games as a fitting corpus. Their results and associated promotions
-are withdrawn as evidence of test-only performance. The affected papers have
-been replaced by the current-game-only [shared-curve affine paper](../docs/shared_curve_affine.md).
-Historical experiment scripts and results remain for inspection, not as endorsed
-methods or external validation. The production population asset and the
-hierarchical-affine and uncertainty-ensemble implementations have been removed.
-Do not rebuild that asset to rerun an archive or make a retired test pass.
+## Run checks
 
-## Offline tests
-
-Run from the repository root using the project's Python environment and Node
-dependencies installed by `python web/build.py`:
+Run from the repository root with the project Python environment active. Node tests use dependencies installed by `python web/build.py`:
 
 ```powershell
 python -m unittest discover -s tests -t . -p "test_*.py"
 node --test tests/web/*.test.mjs
 ```
 
-Run one Python suite with
-`python -m unittest discover -s tests/<component> -t . -p "test_*.py"`.
-Keep `-t .` so package imports resolve from the repository root. `pnpm test`
-inside `web/` runs the same Node suite; no separate Node project is needed under
-`tests/web/`.
+For a focused suite, use `python -m unittest discover -s tests/<component> -t . -p "test_*.py"`; `-t .` preserves package imports from the repository root. `pnpm test` inside `web/` runs the same Node suite. See the [web guide](../web/README.md) for frontend-specific development checks and browser profiling.
 
-Regressions use fake engines, scripted model responses, temporary files/databases,
-mocked downloads and Flask's in-process client. They do not call a live coaching
-model, start listening servers or download model assets. Build regressions mock
-processes rather than installing tools or performing a frontend build.
+## Development
 
-## Saved-game rating refresh
+Keep regressions and fixtures with their component, use meaningful behavioral assertions, and isolate output from production data and accepted results. Test filenames follow the covered module or workflow; benchmark entry points use `benchmark_*` and small-report helpers use `smoke_*`. Production code must not import test helpers or expose test-only modes.
 
-The production default is `shared_curve_affine`. It uses the current game's shared arithmetic accuracy curve and conditional variance, plus a common account-centered prior. It does not load another game, a population curve or a calibration asset. `bayesian_shared_curve` remains an asset-free alternative using the same current-game evidence.
+Game collections and reference labels are evaluation-only, including unlabeled positions. They must not supply reusable training, calibration, normalization or population assets. Use synthetic inputs for invariants and each game's own compatible cached evidence for requested analysis. Preserve [main.py](main.py), [notebook.ipynb](notebook.ipynb), [chess.svg](chess.svg), scratch scripts, source PGNs and historical outputs; user work is outside `test_*.py` discovery.
 
-To refit saved games with the configured method and replace their rating figures:
+The commands below are opt-in development operations. Use existing local engine assets for engine measurements, record settings and cache state, compare output quality alongside speed, and close owned processes. Validate offline before a live check; full live coaching requires an explicit request.
+
+## Batch analysis and saved reconstruction
+
+[analyze_pgn_batch.py](analysis/analyze_pgn_batch.py) accepts one valid standard game per supplied PGN, with a common starting position across the batch. Ordinary runs share one `AnalysisSession`, reuse compatible evidence and calculate missing requests. Existing results require `--replace-output`, which replaces generated analysis, the copied PGN and normal plots while preserving coaching reports and other files. It does not refresh or clear the cache.
 
 ```powershell
-python -m tests.analysis.compare_shared_curve_games
+python -m tests.analysis.analyze_pgn_batch games/game0.pgn games/game1.pgn --timing-output tests/analysis/output/full-analysis-batch/run.json
+python -m tests.analysis.analyze_pgn_batch games/game0.pgn games/game1.pgn --check-cache
+python -m tests.analysis.analyze_pgn_batch games/game0.pgn games/game1.pgn --cache-only --replace-output --timing-output tests/analysis/output/cached-analysis-rerun/run.json
 ```
 
-The runner validates saved engine evidence and uses fresh PGN rating context. It refreshes `games/output/<game>-full/analysis.json` and the game's `player-rating/` figures without engine searches or coaching calls. Old analyses are preserved under the comparison output. Commercial headers enter evaluation only after predictions; previous retired estimates are historical snapshot values, not recomputed baselines.
+`--check-cache` validates all inputs and required cached evidence without engines, output changes or a timing file; existing outputs need no replacement flag for this check. `--cache-only` performs the same preflight before writing and reuses the validated sessions. It prefers each game's pinned manifest; if none exists, it requires complete compatible observations from one coherent engine profile. Missing local assets allow an unambiguous recorded profile, while missing evidence, broken references and ambiguous engine mixtures fail. See the [analysis contract](../analysis/README.md#coaching-artifacts-and-analysis-cache) for discovery rules and [root usage](../README.md#usage) for single-game workflows. `--replace-output` controls output handling alone.
 
-The main SVG compares the game's accuracy curve with both players' results. The default displays affine point decisions without a posterior interval; the Bayesian method displays its conditional posterior. The separate prior figure uses the declared rating scale, with density transformed when required. Output rating coordinates follow the PGN's site and time-control scale; inference remains in native Lichess Blitz coordinates. Output is SVG, with obsolete renderer-owned files replaced and unrelated images preserved.
+Outputs use each PGN's normal game directory and include prepared `analysis.json`, the copied PGN and default accuracy SVGs. Raw observations stay in the configured analysis cache. The timing record includes configuration, cache hits, Maia execution and curve measurements; no coaching model is called. Engine ownership ends with the batch context.
 
-`--games-dir` and `--output-dir` select input and comparison locations. `--figures-only` renders compatible saved results without changing analysis bytes. It does not make a retired method valid or relabel old estimates as current. The scale-conversion tests independently cover inference boundaries, extrapolation, cache reuse and coordinate consistency.
+## Offline cache migration and audit
 
-The old `rating-scales`, `rating-methods-games0-18`, hierarchical and uncertainty comparisons are preserved archives. Their corpus-based entries do not satisfy the test-only requirement; they are not current refresh procedures. Existing mathematical Bayesian-paper illustrations may still be rendered from their own fixed example evidence; they must not provide reusable fitting inputs for other games.
-
-## Top-probability shared curve
-
-The top-probability experiment is run with:
+[migrate_position_cache.py](analysis/migrate_position_cache.py) converts the previous normalized cache into the current readable structure without engines. With cache writers stopped, first stage and validate into a fresh directory outside the cache; `--artifacts` supplies directories containing saved `analysis.json` files whose private evidence associations must be migrated.
 
 ```powershell
-python -m tests.analysis.experiment_shared_curve_top_probability --top-probability 0.68 --sigma-scale 0.5
+python -m tests.analysis.migrate_position_cache analysis/.cache --output tests/analysis/output/cache-migration-preview --artifacts games/output backend/output
+python -m tests.analysis.audit_position_cache tests/analysis/output/cache-migration-preview/staged --output tests/analysis/output/cache-audit.json
 ```
 
-At each position and rating, it keeps the probability-ranked moves through
-cumulative probability strictly above the cutoff, includes all ties at the last
-probability, and renormalizes. Both expected accuracy and adaptive variance use
-that distribution. Actual played moves remain in observed accuracy even when
-outside the selected set. Only positions with a single legal move are omitted
-from both observed and expected averages. The runner now uses the production
-fourth-power prior, flat on 800–2400, with zero-weight endpoints configured by
-`--prior-range` (default 200 and 3000). There is no midpoint-weight parameter.
-The conditional central
-interval remains 20%.
+Migration leaves the source unchanged unless `--apply` is supplied. To publish after inspection, rerun with `--apply` and a fresh `--output` directory; the original `positions`, `games` and `game-metadata` directories remain under that output's `original/` backup. This is a one-time conversion for the previous format. [audit_position_cache.py](analysis/audit_position_cache.py) reads only the current format, checks all observations and manifest pins including inactive evidence, and writes its report without changing the cache; use `analysis/.cache` as its input to check the installed cache.
 
-`tests/analysis/output/shared-curve-top-probability-current-prior/` contains a JSON/CSV table,
-per-game fit data, and SVG figures. A full-probability control uses the same
-sigma multiplier, prior, and forced-position rule. Retained candidate counts,
-probability masses, raw curve reversals, and isotonic adjustments are recorded.
-Reference headers are read only after inference; parameters are not fitted to
-them. Production settings, game analyses, and the paper are unchanged. No engine
-or coaching calls are made. The estimator is isolated in
-`tests/analysis/shared_curve_top_probability.py`; the runner is
-`tests/analysis/experiment_shared_curve_top_probability.py`.
+## Paper figures
 
-## Lichess-accuracy shared-curve experiment
+Render both accuracy figures from saved measurements without engines:
 
 ```powershell
-python -m tests.analysis.experiment_shared_curve_lichess
+python -m tests.analysis.render_accuracy_paper
 ```
 
-This isolated experiment compares an arithmetic shared curve with a
-Lichess-accuracy curve on all saved games. It includes all played positions,
-including forced moves. At each position and rating, it retains the top 99%
-probability mass with cutoff ties and renormalizes the candidate probabilities.
-For candidate accuracy `Q`, fixed actual-game volatility weight `w`, and `n`
-positions, the expected score is
-`0.5 * (sum(w * E[Q]) / sum(w) + n / sum(E[1 / max(1, Q)]))`.
-The observed score uses the same formula on the played moves and is checked
-against the local Lichess full-game implementation. Saved volatility weights
-are also independently reconstructed and checked.
-
-The harmonic term is an expected-reciprocal approximation, not the exact
-expectation of a random game's harmonic mean. It keeps the actual game's
-positions and volatility weights; it does not simulate alternative game paths.
-An independent-position first-order delta-method variance supplies the adaptive
-Gaussian sigma, including the covariance between candidate accuracy and its
-floored reciprocal. Both fits retain top probability 0.99, sigma scale 1.0 and
-the same production prior. These explicit 99% settings are experimental; production
-now defaults to all legal moves. The exponential tails, monotone curve fitting and
-posterior calculation are reused. Reference headers are read
-only after both fits; no parameters are fitted to the references.
-
-The estimator is `tests/analysis/shared_curve_lichess.py`; its runner writes
-CSV/JSON results, per-game experimental and arithmetic fits, combined accuracy
-and posterior SVGs, and separate unnormalized prior SVGs under
-`tests/analysis/output/shared-curve-lichess-top99-current-prior/`. `--output-dir` must stay
-under `tests/analysis/output/`. Production code, configuration, saved analyses,
-rating fits, figures and evidence are checked with SHA-256 before and after.
-No engine or coaching calls are made, and production outputs are not refreshed.
-
-## Arithmetic shared-curve parameter comparison
-
-```powershell
-python -m tests.analysis.experiment_shared_curve_sweep
-```
-
-This separate experiment uses the current arithmetic-accuracy estimator on all
-saved games with the fixed grid of top probabilities 95%, 96%, 97%, 98%, 99%,
-and 100% (the full legal-move policy), crossed with sigma scales 0.5 and 1.0.
-These are the original defaults. Supply `--top-probabilities` and `--sigma-scales`
-for another explicit grid, with a separate output directory to preserve older runs:
-
-```powershell
-python -m tests.analysis.experiment_shared_curve_sweep --top-probabilities 0.99 1.0 --sigma-scales 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0 --output-dir tests/analysis/output/shared-curve-arithmetic-sigma-sweep
-```
-
-The existing prior, curve extension, forced-move exclusion, and posterior median
-remain unchanged. A game qualifies only when **both** players' observed arithmetic
-accuracies intersect its monotone measured curve within 600–2600, including the
-endpoints. Intersections that require extrapolated tails do not qualify.
-
-The primary ranking uses the intersection of qualifying game sets across all
-requested settings. A secondary ranking uses each setting's own qualifying games and
-records the count, preventing changes in game selection from being hidden.
-Ranking uses mean absolute error against commercial PGN estimates, followed by
-RMSE, maximum error, and a stable variant name for ties. Reference ratings never
-enter inference or the intersection filter; this is a requested benchmark
-comparison, not an independent validation of the winning parameters.
-
-`tests/analysis/experiment_shared_curve_sweep.py` saves `comparison.json`,
-`ranking-common.csv`, `ranking-individual.csv`, `players.csv`, a ranking SVG, and
-each variant/game's `fit.json`, `analysis.svg`, and unnormalized `prior.svg` below
-`tests/analysis/output/shared-curve-arithmetic-sweep-current-prior/`; earlier sweep
-outputs keep their recorded prior. Per-game curves and
-posteriors are rendered with four local processes. File hashes check that
-production code, configuration, PGNs, saved analyses, fits, figures, and cached
-evidence remain unchanged. There are no engine or coaching API calls.
-
-## Current rating checks
-
-The active default is `shared_curve_affine`. Its checks cover the current-game curve and conditional variance, translated common prior, affine moment calculation, monotone within-game ordering, missing or uninformative evidence, rating-scale conversion, saved-fit refresh and point-only output. No test-derived population asset is required. Missing legacy assets must not be restored as a test workaround.
-
-A valid whole-collection evaluation runs each game independently: the estimator receives that game's numeric evidence and permitted account inputs, then the runner joins reference ratings to completed predictions. Altering or removing other games must not change its result. Prior results that used any part of the benchmark collection as reusable fitting data are not valid baselines for a clean test-only comparison.
-
-| Maintenance module in `analysis/` | Purpose |
-| --- | --- |
-| `refresh_current_game_ratings.py` | Discover all game PGNs and recompute their saved ratings and figures from each game's own matching cached evidence, even when fit signatures match; verify PGNs, non-rating analysis fields and caches remain unchanged, without scoring references or running engines |
-| `retired_population.py` | Reject withdrawn population-building and corpus-dependent research entry points before their original file access |
-| `shared_curve_affine_paper_figures.py` | Generate the shared-curve affine paper's explanatory SVGs from a declared synthetic curve, with no PGN or cached game inputs |
-| `rating_evidence_fixture.py` | Build synthetic policies and move qualities for rating invariants, without loading games or calibration data |
-
-The current-game-only refresh runs with `python -m tests.analysis.refresh_current_game_ratings` and records its preservation checks under `tests/analysis/output/shared-curve-affine-current-game-only/verification.json`.
-
-Ordering acceptance has one direction: equal commercial White/Black ratings permit a fitted gap strictly below 50 Elo; any nonzero commercial difference requires the same fitted sign, even if the fitted gap is smaller than 50. Above/below-actual classification is a separate exact-sign diagnostic. Neither rule supplies inputs to the estimator.
-
-## Withdrawn rating research archive
-
-Earlier experiments explored population curves, context variance, likelihood mixtures, common account priors, alternative accuracy metrics and paired decisions. Their scripts, numerical outputs and figures remain under `tests/analysis/` and `tests/analysis/output/`. Where another benchmark game's measurements entered fitting, the test-only separation was violated even without commercial labels and even with target exclusion. Those comparisons and resulting promotions are withdrawn. Historical numbers must not be presented as independent validation or as results of the new default.
-
-| Preserved output family | Historical scope and status |
-| --- | --- |
-| `edge-rating-methods`, `universal-rating-methods` | Edge likelihoods, population moments, noise assumptions and ensembles; corpus-based comparisons withdrawn |
-| `simple-rating-restart`, `joint-rating-directions` | Simpler accuracy maps and ordering diagnostics; affected corpus-based candidates withdrawn, archived cohort sizes remain distinct |
-| `lichess-blitz-methods`, `rating-methods-games0-18` | Earlier scale/reference comparisons including retired corpus methods; preserved historical records |
-| `intuitive-curves`, `rating-scales` | Shared-curve candidate and scale-aware comparisons; corpus-based selection/promotion withdrawn |
-| `hierarchical-affine-production`, `arithmetic-coverage-production` | Historical promotion/parity outputs; implementation agreement did not establish valid evaluation separation |
-| `hierarchical-accuracy` | Lichess aggregation, center/contrast and joint-feature trials using a test-derived population; not valid test-only evidence |
-
-`hierarchical_affine` and `uncertainty_ensemble` have been removed from production; `shared_curve_affine` is the current-game-only replacement. `arithmetic_coverage` remains disabled. The old paper renderers and population-asset builder are historical tools, not supported regeneration or deployment commands; the obsolete papers and their dedicated figures have been removed. In particular, `build_rating_calibration.py` must not rebuild a runtime asset from benchmark fixtures. Removing labels, anonymizing contexts, hashing inputs or leaving one game out does not repair the boundary violation.
-
-### Accuracy-measurement research retained for inspection
-
-The scalar and joint measurement helpers can still illustrate mathematical properties on synthetic inputs. They do not authorize corpus construction or another benchmark-dependent rating trial.
-
-| Research module in `analysis/` | Mathematical purpose |
-| --- | --- |
-| `lichess_measurement.py` | Arithmetic and Lichess aggregates, exact policy moments, plug-in approximations and policy-draw covariance on supplied positions |
-| `hierarchical_accuracy_fusion.py` | Native pair-center replacement retaining an arithmetic contrast, with explicit clipping and missing-data behavior |
-| `hierarchical_joint_accuracy.py` | Historical two-feature covariance and affine derivation; corpus-based rating application withdrawn |
-| `experiment_hierarchical_accuracy.py` | Historical benchmark/corpus runner; its saved comparisons are withdrawn |
-
-Lichess volatility weights remain conditional on the reached game path. Independent policy draws do not form alternative legal games. Expected aggregates differ from aggregates of expected move qualities; numerical integration error differs from conditional variance. Center/contrast constraints do not establish a joint posterior. These mathematical distinctions remain useful despite withdrawal of the corpus-based rating comparisons.
-
-Any future population or learned model requires an independently sourced development corpus kept separate from benchmark games, including overlapping games and derived measurements. A source hash or a claim of label-free fitting is not a substitute for that separation. No such corpus is currently used by the default estimator.
+The [renderer](analysis/render_accuracy_paper.py) defaults to `games/output/game10-full/analysis.json`; `--analysis` changes the source, and `--figure`/`--move-figure` select the publication SVG destinations. It renders an anonymous White/Black copy, preserves source identity/evidence and discards temporary extra by-move figures. Paper examples and figures must omit real player names and handles.
 
 ## Small live report
 
-Validate offline first. During development, use at most this short live check
-when needed; generating a full live coaching report requires an explicit request.
-Do not repeatedly retry a failed live check. Use Codex with the existing ChatGPT
-sign-in and close owned model/engine processes on exit.
+When a live development check is necessary after offline validation, use saved analysis for one selected-player decision:
 
 ```powershell
-python tests/coach/smoke_test.py games/output/game2-full/analysis.json
+python tests/coach/smoke_test.py games/output/game2-full/analysis.json --side white
 ```
 
-This uses saved analysis and prepares one selected-player decision, including
-both comparison branches. It requests one 100–180 word report with a diagram,
-without repeating full-game analysis. The default output is
-`tests/coach/output/game2-full-codex-smoke/coaching-smoke.md`. An explicit
-`--output-dir` must differ from the source analysis directory; existing analysis
-and accepted full reports are preserved. Regenerate an incompatible snapshot
-with `coach/coach.py ... --analysis-only` before the check.
+This prepares both comparison branches and requests one short report with a valid diagram through the normal `run_coach` interface. It does not repeat full-game analysis, but its focused investigation can perform engine work. The default report is `tests/coach/output/game2-full-codex-smoke/coaching-smoke.md`; an explicit `--output-dir` must differ from the source analysis directory. `--side` supplies the runtime target; saved evidence has no target side. Use compatible saved analysis and the existing ChatGPT sign-in.
 
-[coach/config.yaml](coach/config.yaml) contains isolated limits: 20,000 cumulative
-tokens, 90 seconds, three local tool calls and at most 250 report words. The
-scenario requests one response and one draft, with model tools disabled after
-preparation. Token events can arrive after an in-flight response exceeds a limit.
-The test prompt is a `.txt` resource. Production has no smoke flags or test imports;
-both scenarios use the common runner through a caller-supplied `CoachingRequest`.
+[coach/config.yaml](coach/config.yaml) owns isolated token, time, tool-call, output-estimate and word limits. The [scenario](coach/smoke_scenario.py) supplies a `CoachingRequest` with one response, one draft and model tools disabled after local preparation; its prompt remains a test `.txt` resource. Usage can arrive after a threshold is exceeded. Diagnose a failed live check before retrying and preserve the source analysis and accepted full report.
 
-## Single-game speed
+## Performance measurements
 
-These opt-in measurements use local Maia and Stockfish without a coaching model
-or listening server. Model assets must already be available. Engines close on
-exit. With a CUDA PyTorch installation, use `uv run --extra cuda python` in place
-of `python` so uv preserves that installation.
+Engine and game benchmarks use local Maia/Stockfish, without a coaching model or listening server. With a CUDA PyTorch installation, replace `python` with `uv run --extra cuda python` so uv preserves that installation. Inspect any runner's `--help` without launching engines.
+
+### Full-game and web routes
 
 ```powershell
 python tests/coach/benchmark_game_speed.py games/game8.pgn --workers 4 --threads-per-worker 2 --cache-dir tests/coach/output/speed-cache --output-dir tests/coach/output/speed-cold
 python tests/coach/benchmark_game_speed.py games/game8.pgn --workers 4 --threads-per-worker 2 --cache-dir tests/coach/output/speed-cache --output-dir tests/coach/output/speed-warm
 python tests/coach/benchmark_web_parallel.py games/game8.pgn --output tests/coach/output/web-parallel.json
+python tests/coach/benchmark_game_compare.py tests/coach/output/speed-cold tests/coach/output/speed-warm --output tests/coach/output/speed-comparison.json
 ```
 
-Use a fresh cache directory for the cold run and the same directory for the warm
-run. Without an override, caches use shared `ANALYSIS.CACHE_DIR`, independently
-of output paths. Full-game measurements save `analysis.json` and `timing.json`
-with position/search-phase timing, model calls and rows, cache hits, workers and
-device. Analysis wall time excludes startup and coaching; summed parallel search
-times measure work, not elapsed time. Batched GPU time is measured as a batch,
-not attributed arbitrarily to individual positions. The web-route benchmark
-checks batched Maia, concurrent Stockfish streams and cached repeats in process.
+Choose a fresh cache directory for a cold run and reuse it for the warm run. Without `--cache-dir`, game benchmarks use shared `ANALYSIS.CACHE_DIR`, independently of output location. Full-game runs save `analysis.json` and `timing.json` with position/search timing, model calls/rows, hits, worker counts and device. Analysis wall time excludes startup and coaching; summed parallel search time measures work rather than elapsed time, and GPU batch time is recorded as a batch. The web runner measures batched Maia, concurrent Stockfish streams and cached repeats through in-process routes.
 
-Compare saved runs with the reference first:
+The comparison reads saved runs, treating the first as reference, and writes JSON/Markdown covering time, scores, best moves, achieved depths, hints and player accuracy. Check each run's recorded configuration when interpreting a comparison; changed scores alone do not show which run is more accurate, and a one-worker run does not reproduce an older implementation. Keep current measurements separate from preserved historical results in `coach/output/` and `web/benchmarks/`.
 
-```powershell
-python tests/coach/benchmark_game_compare.py tests/coach/output/speed-serial tests/coach/output/speed-cold --output tests/coach/output/speed-comparison.json
-```
-
-The JSON/Markdown comparison includes wall/component time, scores, best moves,
-achieved depths, hints and player accuracy. Changed scores alone do not establish
-which run is more accurate. A one-worker run of current code does not reproduce
-a retired implementation. Browser profiling and historical comparisons are
-documented in [web performance](../web/README.md#performance).
-
-## Engine benchmarks
-
-Inspect available options without launching engines:
+### Engine strategies
 
 ```powershell
 python -m tests.engine.benchmark_engines --help
+python -m tests.engine.benchmark_engines --device cpu --maia-only --output tests/engine/output/engine-cpu.json
+python -m tests.engine.benchmark_engines --strategy staged --threads 8 --max-seconds 60 --output tests/engine/output/engine-staged.json
 ```
 
-Measurements require local assets and an explicit output path. For example:
-
-```powershell
-python -m tests.engine.benchmark_engines --device cpu --maia-only --output tests/coach/output/engine-cpu.json
-python -m tests.engine.benchmark_engines --strategy staged --threads 8 --max-seconds 60 --output tests/coach/output/engine-staged.json
-```
-
-These compare cold/warm Maia batches or Stockfish search strategies, depths and
-elapsed times. They are separate from automatic regression discovery. Use the
-same CUDA invocation rule as the full-game benchmarks, preserve previous outputs,
-and close engine processes after runs.
-
-## Fixtures and output
-
-- `analysis/data/` contains frozen rating evidence; shared fake engines and
-  scripted agent fixtures live in `coach/`.
-- `coach/config.yaml` and test `.txt` prompts are isolated from production settings.
-- `coach/output/` and `web/benchmarks/` hold generated measurements and preserved
-  historical results. Recorded settings describe those runs, not current defaults.
-- [main.py](main.py), [notebook.ipynb](notebook.ipynb) and [chess.svg](chess.svg)
-  are preserved user work and are excluded from `test_*.py` discovery.
-
-Preserve scratch scripts, notebooks, chess diagrams and existing output when
-reorganizing tests. Add regressions and fixtures to the matching component.
-Focused test names retain the runtime module's functional group; broader checks
-name their workflow. Benchmark commands use `benchmark_*`, and small-report
-helpers use `smoke_*`. Keep fixtures separate from test cases and runtime code.
+These opt-in measurements compare cold/warm Maia batches or Stockfish strategies, achieved depths and elapsed times. They require local assets and an explicit output path and are excluded from regression discovery. [Root config.yaml](../config.yaml) supplies production defaults; explicit benchmark arguments describe the experiment rather than new application defaults.

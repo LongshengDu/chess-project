@@ -1,5 +1,6 @@
 """Diagram positions, branch provenance and rendering without extra searches."""
 import io
+from copy import deepcopy
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -12,8 +13,9 @@ import chess.svg
 
 from coach.tools_chess import ChessTools
 from analysis.game.pipeline import analyze_game
+from analysis.cache.artifacts import AnalysisStore
 from analysis.game.history import history_at
-from tests.coach.fixtures import FakeEngines
+from tests.coach.fixtures import FakeAnalysisSession
 
 
 class DiagramTests(unittest.TestCase):
@@ -21,13 +23,13 @@ class DiagramTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
-        self.engines = FakeEngines()
-        self.addCleanup(self.engines._temp.cleanup)
+        self.session = FakeAnalysisSession()
+        self.addCleanup(self.session._temp.cleanup)
 
     def library(self, pgn='1. e4 e5 2. Nf3 Nc6 *', side='white'):
         game = chess.pgn.read_game(io.StringIO(pgn))
-        analysis = analyze_game(game, self.engines, side, 1400, progress=lambda _: None)
-        return ChessTools(analysis, self.engines, self.directory)
+        analysis = analyze_game(game, self.session, actual_elo=1400, progress=lambda _: None)
+        return ChessTools(analysis, self.session, self.directory, side=side)
 
     def assert_svg(self, library, path):
         self.assertIn(path, library.diagrams.paths)
@@ -36,18 +38,18 @@ class DiagramTests(unittest.TestCase):
 
     def test_comparison_returns_correct_start_and_both_result_boards(self):
         library = self.library()
-        before = len(self.engines.sf_calls)
+        before = len(self.session.sf_calls)
         with patch('coach.report_diagrams.chess.svg.board', wraps=chess.svg.board) as render:
             result = library.call('compare_played_vs_candidate', {'ply': 3, 'candidate': 'b1c3'})
         # Two candidate checks plus one novel human-reply batch. The played
         # branch reuses saved reply scores; drawing adds no engine searches.
-        self.assertEqual(len(self.engines.sf_calls)-before, 3)
+        self.assertEqual(len(self.session.sf_calls)-before, 3)
         self.assertEqual(render.call_count, 3)
         paths = [result['comparison_diagram']]
         for index, name in enumerate(('played', 'candidate')):
             branch = result[name]
             paths.append(branch['after_defense_diagram'])
-            board = self.engines.board(history_at(library.analysis, **branch['after_defense']))
+            board = self.session.board(history_at(library.analysis, **branch['after_defense']))
             self.assertEqual(render.call_args_list[index].args[0].fen(), board.fen())
             self.assertEqual(branch['fen_after_defense'], board.fen())
             self.assertEqual(render.call_args_list[index].kwargs['lastmove'], board.peek())
@@ -62,13 +64,13 @@ class DiagramTests(unittest.TestCase):
     def test_get_position_renders_later_line_or_reuses_result_without_engine_calls(self):
         library = self.library()
         branch = library.explore_candidate(3, 'b1c3')
-        with patch.object(self.engines, 'sf', side_effect=AssertionError('Rendering must not search')), \
-             patch.object(self.engines, 'human', side_effect=AssertionError('Rendering must not run Maia')):
+        with patch.object(self.session, 'sf', side_effect=AssertionError('Rendering must not search')), \
+             patch.object(self.session, 'human', side_effect=AssertionError('Rendering must not run Maia')):
             same = library.get_position(**branch['after_defense'])
             self.assertEqual(same['diagram'], branch['after_defense_diagram'])
             line = branch['stockfish']['line']
             endpoint = library.get_position(3, line)
-            self.assertEqual(endpoint['fen'], self.engines.board(['e2e4', 'e7e5']+line).fen())
+            self.assertEqual(endpoint['fen'], self.session.board(['e2e4', 'e7e5']+line).fen())
             self.assert_svg(library, endpoint['diagram'])
             earlier = library.get_position(1)
             self.assert_svg(library, earlier['diagram'])
@@ -92,10 +94,34 @@ class DiagramTests(unittest.TestCase):
         with patch('coach.report_diagrams.chess.svg.board', wraps=chess.svg.board) as render:
             white = library.get_position(1)
             self.assertEqual(render.call_args.kwargs['arrows'][0].color, '#e69138cc')
-            library.analysis['selected_player']['side'] = 'black'
+            library = self.library(side='black')
             black = library.get_position(1)
             self.assertFalse(render.call_args.kwargs['orientation'])
         self.assertNotEqual(white['diagram'], black['diagram'])
+
+    def test_one_saved_analysis_supports_both_coaching_targets_unchanged(self):
+        game = chess.pgn.read_game(io.StringIO('1. e4 e5 2. Nf3 Nc6 *'))
+        analysis = analyze_game(game, self.session, actual_elo=1600, progress=lambda _: None)
+        path = self.directory/'analysis.json'
+        store = AnalysisStore(self.session.cache.directory)
+        store.save(path, analysis)
+        original_bytes = path.read_bytes()
+        prepared = store.load(path)
+        before = deepcopy(prepared)
+        diagrams = {}
+        for side in ('white', 'black'):
+            library = ChessTools(prepared, self.session, self.directory/side, side=side)
+            summary = library.get_game_analysis()
+            self.assertEqual(summary['coaching'], {'side': side})
+            self.assertTrue(all(prepared['moves'][moment['ply']-1]['side'] == side
+                                for moment in summary['critical_moments']))
+            with patch('coach.report_diagrams.chess.svg.board', wraps=chess.svg.board) as render:
+                diagrams[side] = library.get_position(1)['diagram']
+            self.assertEqual(render.call_args.kwargs['orientation'], side == 'white')
+        self.assertNotEqual(diagrams['white'], diagrams['black'])
+        self.assertEqual(prepared, before)
+        self.assertEqual(prepared['coaching'], {})
+        self.assertEqual(path.read_bytes(), original_bytes)
 
 
 if __name__ == '__main__':

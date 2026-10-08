@@ -6,6 +6,12 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import statistics
+import sys
+
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from analysis.cache.artifacts import AnalysisStore
 
 
 def main():
@@ -13,8 +19,9 @@ def main():
     parser.add_argument('runs', nargs='+', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    store = AnalysisStore()
     runs = [(path, json.loads((path/'timing.json').read_text(encoding='utf-8')),
-             json.loads((path/'analysis.json').read_text(encoding='utf-8'))) for path in args.runs]
+             store.load(path/'analysis.json')) for path in args.runs]
     _, baseline, reference = runs[0]
     rows = []
     severity = {'inaccuracy', 'mistake', 'blunder'}
@@ -47,13 +54,13 @@ def main():
             'all_legal_moves_scored': all(p['search']['coverage_complete'] for p in timing['positions']),
             'severity_changes': changes,
             'accuracy': {side: analysis['performance']['players'][side]['accuracy'] for side in ('white','black')},
-            'played_elo': {side: analysis['played_elo'][side]['estimate'] for side in ('white','black')},
+            'average_accuracy': {side: analysis['accuracy_curve']['players'][side]['average_accuracy'] for side in ('white','black')},
         })
     result = {'pgn': baseline['pgn'], 'plies': baseline['plies'], 'runs': rows,
               'notes': ['Cold independent caches; unchanged depth 18 / 6-second position budgets.',
                         'Parallel search and phase times are summed workload, not elapsed game time.',
                         'One run per allocation. Evaluation differences are against the original run, not chess ground truth.',
-                        'No LLM requests or tokens. This benchmark covers local analysis and fitting, not report generation.']}
+                        'No LLM requests or tokens. This benchmark covers local analysis and accuracy measurements, not report generation.']}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.with_suffix('.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')
     lines = ['# Single-game analysis performance', '', f"Game: `{baseline['pgn']}`; {baseline['plies']} plies.", '',

@@ -10,17 +10,17 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 
-from coach.agent_runner import run_coach
+from coach.agent_runner import CoachingRequest, run_coach
 from coach.tools_chess import ChessTools
 from analysis.game.pipeline import analyze_game
 from analysis.game.history import history_at
 from analysis.game.study import load_game
-from coach.agent_codex import CodexChessSession, run_codex
+from coach.agent_codex import CodexChessSession, public_error_message, run_codex
 from coach.agent_budget import CoachingLimitError, RunBudget
 from coach.report_output import ReportGate, check_sections
 from coach.agent_progress import CoachProgress
 from tests.coach.smoke_scenario import run_smoke, validate_smoke_report
-from tests.coach.fixtures import FakeEngines, ScriptedCodex
+from tests.coach.fixtures import FakeAnalysisSession, ScriptedCodex
 
 
 class BudgetTests(unittest.TestCase):
@@ -30,12 +30,12 @@ class BudgetTests(unittest.TestCase):
         self.root = Path(temp.name)
         pgn = self.root/'game.pgn'
         pgn.write_text('[WhiteElo "1400"]\n[BlackElo "1500"]\n\n1. e4 e5 2. Nf3 Nc6 *', encoding='utf-8')
-        self.engines = FakeEngines()
-        self.addCleanup(self.engines._temp.cleanup)
-        self.analysis = analyze_game(load_game(pgn), self.engines, 'white', 1400, progress=lambda _: None)
+        self.session = FakeAnalysisSession()
+        self.addCleanup(self.session._temp.cleanup)
+        self.analysis = analyze_game(load_game(pgn), self.session, progress=lambda _: None)
 
     def library(self, smoke=False):
-        return ChessTools(self.analysis, self.engines, self.root/'run', max_calls=3 if smoke else 20)
+        return ChessTools(self.analysis, self.session, self.root/'run', side='white', max_calls=3 if smoke else 20)
 
     def test_compact_evidence_retains_scores_and_full_branch_history(self):
         library = self.library()
@@ -48,8 +48,14 @@ class BudgetTests(unittest.TestCase):
             original = next(c for c in full['baseline']['candidate_moves'] if c['move'] == score['move'])
             self.assertEqual(score['eval'], original['eval'])
             self.assertEqual(score['loss'], original['loss'])
-        self.assertEqual(len(compact['baseline']['maia']), 4)
-        self.assertEqual(len(full['baseline']['maia']), 17)
+        self.assertEqual(len([key for key in compact['baseline']['maia'] if key.isdigit()]), 4)
+        self.assertEqual(set(full['baseline']['maia']), set(map(str, range(600, 2601, 100))))
+        for rating, record in compact['baseline']['maia'].items():
+            original = full['baseline']['maia'][rating]
+            self.assertEqual(set(record), {'moves', 'expected_accuracy', 'absolute_deviation'})
+            self.assertEqual(record['moves'], original['moves'][:3])
+            for metric in ('expected_accuracy', 'absolute_deviation'):
+                self.assertEqual(record[metric], float(f'{original[metric]:.5g}'))
 
     def test_heading_aliases_and_all_missing_sections_are_reported_together(self):
         check_sections('### **1. Ratings**\n## Strengths\n## Weak decisions\n## Key lessons\n## Next steps\n## Practice positions')
@@ -143,7 +149,7 @@ class BudgetTests(unittest.TestCase):
         self.assertNotIn('# Short review', str(progress_messages))
         self.assertNotIn('earlier setup', report)
         params = clients[0].requests[-1][1]
-        self.assertEqual(len(params['dynamicTools']), 9)
+        self.assertEqual(len(params['dynamicTools']), 11)
         self.assertTrue(params['ephemeral'])
         self.assertFalse(params['config']['features.shell_tool'])
 
@@ -162,6 +168,59 @@ class BudgetTests(unittest.TestCase):
             run_codex(library, ReportGate(library, report_name='coaching-smoke', max_attempts=1, validator=lambda answer: validate_smoke_report(library, answer)), RunBudget(), '', '', allow_tools=False, client_factory=lambda **k:client)
         self.assertEqual(client.methods, ['account/read'])
         self.assertTrue(client.closed)
+
+    def test_codex_reports_structured_turn_failure_without_retrying(self):
+        for final_error in (None, NS(message='The selected model is unavailable.')):
+            with self.subTest(final_error=final_error):
+                class Client:
+                    def __init__(self, **kwargs): self.closed = False; self.turns = 0
+                    def start(self): pass
+                    def initialize(self): pass
+                    def close(self): self.closed = True
+                    def request(self, method, params, **kwargs):
+                        if method == 'account/read':
+                            return NS(model_dump=lambda **k: {'account': {'type': 'chatgpt'}})
+                        return NS(thread=NS(id='fixture'), model='fixture')
+
+                class Thread:
+                    def __init__(self, client, ident): self.client = client
+                    def turn(self, prompt, **kwargs): self.client.turns += 1; return self
+                    def stream(self):
+                        yield NS(method='error', payload=NS(
+                            error=NS(message='The selected model is unavailable.'), will_retry=False))
+                        yield NS(method='turn/completed', payload=NS(
+                            turn=NS(status='failed', error=final_error)))
+
+                client = Client()
+                library = self.library(True)
+                with patch('openai_codex.Thread', Thread), self.assertRaisesRegex(
+                        CoachingLimitError, 'selected model is unavailable'):
+                    run_codex(library, ReportGate(library), RunBudget(), '', '',
+                              client_factory=lambda **kwargs: client)
+                self.assertTrue(client.closed)
+                self.assertEqual(client.turns, 1)
+
+    def test_failed_coaching_persists_public_failure_detail(self):
+        output = self.root/'failed-detail'
+        request = CoachingRequest(prepare_task=lambda library: 'fixture')
+        with patch('coach.agent_codex.run_codex', side_effect=CoachingLimitError(
+                'Codex report turn failed: selected model unavailable.')):
+            with self.assertRaises(CoachingLimitError):
+                run_coach(self.analysis, self.session, output, side='white',
+                          request=request, progress=lambda message: None)
+        saved = json.loads((output/'agent_run.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved['error']['type'], 'CoachingLimitError')
+        self.assertIn('selected model unavailable', saved['error']['message'])
+        self.assertEqual(saved, json.loads((output/'usage.jsonl').read_text(encoding='utf-8')))
+
+    def test_codex_public_error_extracts_provider_message_without_raw_envelope(self):
+        message = "The 'fixture-model' model is not supported when using Codex with a ChatGPT account."
+        wrapped = json.dumps({'type': 'error', 'status': 400, 'error': {
+            'type': 'invalid_request_error', 'message': message}, 'private_context': 'DO_NOT_SAVE'})
+        self.assertEqual(public_error_message(wrapped), message)
+        self.assertEqual(public_error_message(message), message)
+        self.assertEqual(public_error_message(json.dumps({'message': message})), message)
+        self.assertNotIn('DO_NOT_SAVE', public_error_message(json.dumps({'private_context': 'DO_NOT_SAVE'})))
 
     def test_codex_repair_respects_response_limit_and_counts_each_unreported_turn(self):
         for limit, report_first_usage in ((1, False), (2, False), (2, True)):
@@ -228,7 +287,7 @@ class BudgetTests(unittest.TestCase):
                 return super().report(*args, **kwargs).replace('## Exercises', '## Other')
         model = BadFinal()
         with self.assertRaisesRegex(CoachingLimitError, 'after 2 drafts'):
-            model.run(self.analysis, self.engines, self.root/'failed')
+            model.run(self.analysis, self.session, self.root/'failed', side='white')
         self.assertEqual(model.index, 7)
         self.assertTrue((self.root/'failed/coaching.draft.md').exists())
         self.assertFalse((self.root/'failed/coaching.md').exists())
@@ -248,7 +307,7 @@ class BudgetTests(unittest.TestCase):
         (output/'coaching.md').write_text('previous accepted report', encoding='utf-8')
         model = ScriptedCodex()
         with patch('coach.agent_codex.run_codex', side_effect=model):
-            report = run_smoke(self.analysis, self.engines, output)
+            report = run_smoke(self.analysis, self.session, output, side='white')
         self.assertEqual(model.index, 1)
         self.assertLess(len(report.split()), 250)
         self.assertEqual((output/'coaching.md').read_text(encoding='utf-8'), 'previous accepted report')

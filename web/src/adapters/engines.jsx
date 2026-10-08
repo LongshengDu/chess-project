@@ -62,9 +62,11 @@ export function EngineProvider({ children }) {
       activeSearch.current.add(search);
       let reader;
       try {
+        const {history, ...searchOptions} = options;
         const response = await fetch('/api/platform/stockfish', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({fen, depth, seconds:searchConfig?.budgets[depth], options, search_id}), signal:controller.signal,
+          body:JSON.stringify({fen, depth, seconds:searchConfig?.budgets[depth], options:searchOptions,
+            search_id, ...history}), signal:controller.signal,
         });
         if (!response.ok) throw new Error((await response.json()).error || 'Evaluation failed');
         reader = response.body.getReader();

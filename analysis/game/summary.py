@@ -1,22 +1,23 @@
 """Balanced investigation selection and a compact view of saved game evidence."""
 import chess
 import numpy as np
-from analysis.position_evaluation import RATINGS, header_elo
+from analysis.position_evaluation import RATINGS
 from analysis.move_hints import expected_score, mate_for
-from analysis.player_rating.scale import analysis_scale, native_player_rating
+from analysis.maia_context import native_player_rating
+from analysis.accuracy.comparison import AccuracyComparison
 
 
-def decision_rows(analysis):
-    return [row for row in analysis['moves'] if row['side'] == analysis['selected_player']['side']
+def decision_rows(analysis, side):
+    if side not in ('white', 'black'):
+        raise ValueError('Coaching side must be white or black.')
+    return [row for row in analysis['moves'] if row['side'] == side
             and chess.Board(row['fen']).legal_moves.count() > 1]
 
 
-def candidates_for_investigation(rows, selected_side, actual_elo, fitted, headers, *, native_levels=None):
+def candidates_for_investigation(rows, native_levels):
     moments = []
     for index, row in enumerate(rows):
-        level = (native_levels[row['side']] if native_levels is not None else
-                 actual_elo if row['side'] == selected_side else
-                 header_elo(headers, row['side']) or fitted[row['side']]['estimate'] or 1500)
+        level = native_levels[row['side']]
         near = min(RATINGS, key=lambda r: abs(r-level))
         stronger = sorted({min(RATINGS, key=lambda r: abs(r-level-step)) for step in (200, 400, 600)})
         played = next(c for c in row['candidate_moves'] if c['move'] == row['played']['move'])
@@ -63,31 +64,14 @@ def candidates_for_investigation(rows, selected_side, actual_elo, fitted, header
     return sorted(moments, key=lambda m: (-m['priority'], m['ply']))
 
 
-def rating_note(analysis):
-    """Describe the saved estimator accurately in the agent's compact input."""
-    name = analysis.get('played_elo_name') or analysis.get('played_elo_method', 'Saved rating estimate').replace('_', ' ').title()
-    central_interval = analysis.get('played_elo_central_interval', analysis.get('played_elo_confidence'))
-    if central_interval is not None:
-        interval = f'central {central_interval:.0%} interval'
-    elif any(player.get('interval') is not None for player in analysis.get('played_elo', {}).values()):
-        interval = 'saved interval'
-    else:
-        interval = 'point estimates; no uncertainty interval'
-    return ' '.join(part for part in (
-        f'{name}; {interval}.',
-        f"Displayed played-level scale: {analysis.get('played_elo_scale', {}).get('name', 'Lichess Blitz')}. Maia evidence and tool ratings use Lichess Blitz.",
-        analysis.get('played_elo_description'), analysis.get('played_elo_interval_scope')) if part)
-
-
-def compact_summary(analysis):
-    """Read saved analysis without calculating hints or mutating its records."""
-    selected = analysis['selected_player']
-    native_levels = {side: (native_player_rating(analysis, side)
-                            or native_player_rating(analysis, side, fitted=True) or 1500)
+def compact_summary(analysis, side):
+    """Prepare a targeted request from shared evidence without mutating it."""
+    decisions = decision_rows(analysis, side)
+    selected_side = side
+    curve = analysis.get('accuracy_curve')
+    native_levels = {side: (native_player_rating(analysis, side) or 1500)
                      for side in ('white', 'black')}
-    moments = candidates_for_investigation(analysis['moves'], selected['side'], selected['actual_elo'],
-                                           analysis['played_elo'], analysis['headers'], native_levels=native_levels)
-    decisions = decision_rows(analysis)
+    moments = candidates_for_investigation(analysis['moves'], native_levels)
     decision_plies = {r['ply'] for r in decisions}
     relevant = [m for m in moments if m['ply'] in decision_plies]
     # Seed distinct parts of the game rather than three adjacent moves in one
@@ -128,24 +112,30 @@ def compact_summary(analysis):
     overview = []
     for index, row in enumerate(analysis['moves']):
         likely_reply = None
-        if row['side'] == selected['side'] and index+1 < len(analysis['moves']):
+        if row['side'] == selected_side and index+1 < len(analysis['moves']):
             reply = analysis['moves'][index+1]
             level = native_levels[reply['side']]
-            rating = min(map(int, reply['maia']), key=lambda r: (abs(r-level), r))
-            choices = reply['maia'][str(rating)]
+            rating = min((int(r) for r in reply['maia'] if r.isdigit()), key=lambda r: (abs(r-level), r))
+            choices = reply['maia'][str(rating)]['moves']
             if choices:
                 top = choices[0]
                 likely_reply = [rating, top['san'], top['p'], top['eval']]
         overview.append([row['ply'], row['label'], row['played']['loss'], row.get('flags', []), likely_reply])
-    return {'headers': {k: v for k, v in analysis['headers'].items() if k in ('White', 'Black', 'WhiteElo', 'BlackElo', 'Result', 'Site', 'TimeControl')},
-        'selected_player': selected, 'played_elo': analysis['played_elo'],
-        'actual_rating_scale': analysis_scale(analysis),
-        'played_elo_scale': {key: value for key, value in analysis.get('played_elo_scale',
-            {'scale': 'lb', 'name': 'Lichess Blitz'}).items() if key in ('scale', 'name', 'native_scale')},
-        'maia_rating_scale': 'Lichess Blitz',
-        'selected_player_maia_elo': native_levels.get(selected['side']),
+    return {
+        'game': {**analysis['game'], 'maia_rating_scale': 'lichess_blitz',
+                 **{side: {**analysis['game'][side], 'maia_elo': level} for side, level in native_levels.items()}},
+        'coaching': {**analysis['coaching'], 'side': selected_side},
         'performance': analysis.get('performance'),
-        'elo_note': rating_note(analysis),
+        'position_difficulty': (AccuracyComparison(analysis).compare_positions(ratings=[
+            min(RATINGS, key=lambda r: (abs(r-native_levels[selected_side]), r))]) if curve else None),
+        'accuracy_curve': ({
+            **{key: curve[key] for key in
+               ('rating_scale', 'rating_name', 'ratings', 'expected_accuracy', 'absolute_deviation',
+                'position_selection', 'pooling')},
+            'players': {side: {key: player.get(key) for key in
+                ('average_accuracy', 'lichess_accuracy', 'moves_used')}
+                for side, player in curve['players'].items()}
+        } if curve else None),
         'stages_reached': stages, 'required_decisions': min(3, len(decisions)), 'critical_moments': chosen,
         'overview_columns': ['ply', 'move', 'loss', 'flags', 'likely_reply'],
         'likely_reply_columns': ['maia_rating', 'san', 'p', 'eval'], 'likely_reply_conditioning': 'equal_rating',

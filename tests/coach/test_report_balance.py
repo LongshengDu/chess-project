@@ -7,6 +7,7 @@ from unittest.mock import patch
 import chess.pgn
 
 from analysis.game.summary import candidates_for_investigation, compact_summary
+from analysis.game.metadata import game_metadata
 from tests.analysis.test_move_hints import cp_for, row_for
 
 
@@ -19,11 +20,11 @@ def game_analysis():
     for ply, move in enumerate(game.mainline_moves(),1):
         row = row_for(.5,.5,board.fen(),move.uci())
         row.update(ply=ply,label=board.san(move),stage='middlegame',flags=[])
-        for rating, choices in row['maia'].items():
-            row['maia'][rating] = [{k:c[k] for k in ('move','san','eval','loss')} | {'p':c['maia_p'][rating]} for c in choices]
         rows.append(row); board.push(move)
-    return {'headers':{'WhiteElo':'1400','BlackElo':'1700'},'selected_player':{'side':'white','actual_elo':1400},
-        'played_elo':{'white':{'estimate':1500},'black':{'estimate':1800}},'moves':rows}
+    headers = dict(game.headers) | {'WhiteElo': '1400', 'BlackElo': '1700'}
+    return {'headers': headers, 'game': game_metadata(headers),
+        'coaching': {},
+        'moves':rows}
 
 
 class ReportBalanceTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class ReportBalanceTests(unittest.TestCase):
         meaningful['flags'] = ['mistake']
         for row in (winning,meaningful):
             next(c for c in row['candidate_moves'] if c['move']==row['played']['move']).update(row['played'])
-        moments = {m['ply']:m for m in candidates_for_investigation(analysis['moves'],'white',1400,analysis['played_elo'],analysis['headers'])}
+        moments = {m['ply']:m for m in candidates_for_investigation(analysis['moves'], {'white': 1400, 'black': 1700})}
         self.assertNotIn('objective_loss',moments[1]['reasons'])
         self.assertNotIn('attainable_human_alternative',moments[1]['reasons'])
         self.assertIn('objective_loss',moments[3]['reasons'])
@@ -49,7 +50,7 @@ class ReportBalanceTests(unittest.TestCase):
             row['position_eval'],row['played']['eval'],row['played']['loss'] = '#3','#4',None
             next(c for c in row['candidate_moves'] if c['move']==row['played']['move']).update(row['played'])
         analysis['moves'][8]['flags'] = ['sacrifice']
-        moments = {m['ply']:m for m in candidates_for_investigation(analysis['moves'],'white',1400,analysis['played_elo'],analysis['headers'])}
+        moments = {m['ply']:m for m in candidates_for_investigation(analysis['moves'], {'white': 1400, 'black': 1700})}
         for ply in (17,19,21,23):
             self.assertLess(moments[ply]['priority'],moments[9]['priority'])
 
@@ -60,22 +61,22 @@ class ReportBalanceTests(unittest.TestCase):
         moments = [{'ply':p,'priority':score,'stage':analysis['moves'][p-1]['stage']} for p,score in
                    [(9,10),(11,9),(13,8),(21,7)]]
         with patch('analysis.game.summary.candidates_for_investigation',return_value=moments):
-            summary = compact_summary(analysis)
+            summary = compact_summary(analysis, 'white')
         plies = [m['ply'] for m in summary['critical_moments']]
         self.assertEqual(plies,sorted(plies))
         self.assertIn(21,plies)  # Spread out rather than only 9,11,13.
         self.assertEqual({m['stage'] for m in summary['critical_moments']},{'opening','middlegame','endgame'})
         moments[1]['priority'] = 30
         with patch('analysis.game.summary.candidates_for_investigation',return_value=moments):
-            self.assertIn(11,[m['ply'] for m in compact_summary(analysis)['critical_moments']])
+            self.assertIn(11,[m['ply'] for m in compact_summary(analysis, 'white')['critical_moments']])
 
     def test_overview_exposes_saved_human_reply_even_for_unselected_moments(self):
         analysis = game_analysis()
         original = copy.deepcopy(analysis)
         with patch('analysis.game.summary.candidates_for_investigation',return_value=[]):
-            summary = compact_summary(analysis)
+            summary = compact_summary(analysis, 'white')
         self.assertNotIn(19,[m['ply'] for m in summary['critical_moments']])
-        expected = analysis['moves'][19]['maia']['1700'][0]
+        expected = analysis['moves'][19]['maia']['1700']['moves'][0]
         self.assertEqual(summary['overview'][18][4],[1700,expected['san'],expected['p'],expected['eval']])
         self.assertIsNone(summary['overview'][-1][4])
         self.assertEqual(analysis,original)  # No flag/evidence mutation or searches.

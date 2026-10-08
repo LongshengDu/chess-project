@@ -13,7 +13,7 @@ from coach.tools_chess import ChessTools
 from analysis.game.pipeline import analyze_game
 from coach.agent_progress import CoachProgress, print_progress
 from coach.agent_runner import CoachingRequest
-from tests.coach.fixtures import FakeEngines, ScriptedCodex
+from tests.coach.fixtures import FakeAnalysisSession, ScriptedCodex
 
 
 class ProgressTests(unittest.TestCase):
@@ -63,12 +63,12 @@ class ProgressTests(unittest.TestCase):
 
     def test_tools_and_scripted_agent_show_progress_without_extra_responses(self):
         with tempfile.TemporaryDirectory() as tmp:
-            engines = FakeEngines()
-            self.addCleanup(engines._temp.cleanup)
+            session = FakeAnalysisSession()
+            self.addCleanup(session._temp.cleanup)
             game = chess.pgn.read_game(io.StringIO('1. e4 e5 2. Nf3 Nc6 *'))
-            analysis = analyze_game(game, engines, 'white', 1400, progress=lambda _: None)
+            analysis = analyze_game(game, session, actual_elo=1400, progress=lambda _: None)
             model, messages = ScriptedCodex(), []
-            report = model.run(analysis, engines, Path(tmp), progress=messages.append)
+            report = model.run(analysis, session, Path(tmp), side='white', progress=messages.append)
             text = '\n'.join(messages)
             self.assertIn('Preparing the critical decisions', text)
             self.assertIn('Comparing likely human replies', text)
@@ -81,12 +81,12 @@ class ProgressTests(unittest.TestCase):
 
     def test_failed_investigation_is_visible_and_silent_sink_remains_supported(self):
         with tempfile.TemporaryDirectory() as tmp:
-            engines = FakeEngines()
-            self.addCleanup(engines._temp.cleanup)
+            session = FakeAnalysisSession()
+            self.addCleanup(session._temp.cleanup)
             game = chess.pgn.read_game(io.StringIO('1. e4 *'))
-            analysis = analyze_game(game, engines, 'white', 1400, progress=lambda _: None)
+            analysis = analyze_game(game, session, actual_elo=1400, progress=lambda _: None)
             messages = []
-            library = ChessTools(analysis, engines, Path(tmp), progress=CoachProgress(messages.append))
+            library = ChessTools(analysis, session, Path(tmp), side='white', progress=CoachProgress(messages.append))
             with self.assertRaises(ValueError):
                 library.call('get_position', {'ply': 999})
             self.assertIn('could not complete', messages[-1])
@@ -101,15 +101,15 @@ class ProgressTests(unittest.TestCase):
 
     def test_preparation_failure_stops_progress_without_contacting_a_model(self):
         with tempfile.TemporaryDirectory() as tmp:
-            engines = FakeEngines()
-            self.addCleanup(engines._temp.cleanup)
+            session = FakeAnalysisSession()
+            self.addCleanup(session._temp.cleanup)
             game = chess.pgn.read_game(io.StringIO('1. e4 *'))
-            analysis = analyze_game(game, engines, 'white', 1400, progress=lambda _: None)
+            analysis = analyze_game(game, session, actual_elo=1400, progress=lambda _: None)
             def fail(library):
                 raise ValueError('Local preparation failed')
             model, messages = ScriptedCodex(), []
             with self.assertRaisesRegex(ValueError, 'Local preparation failed'):
-                model.run(analysis, engines, Path(tmp), progress=messages.append,
+                model.run(analysis, session, Path(tmp), side='white', progress=messages.append,
                           request=CoachingRequest(prepare_task=fail))
             self.assertEqual(model.index, 0)
             self.assertIn('stopped before completion', messages[-1])

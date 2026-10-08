@@ -1,4 +1,4 @@
-"""Offline upstream parity, saved-game migration and report snapshot checks."""
+"""Offline upstream parity, prepared-game statistics and report snapshot checks."""
 import copy
 import io
 import json
@@ -7,18 +7,19 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import chess
 import chess.pgn
 
-from analysis.lichess_accuracy import (division, force_cp, game_accuracy, judgment,
+from analysis.accuracy.lichess import (division, force_cp, game_accuracy, judgment,
     move_accuracy, move_metrics, phase_accuracies, round_percent, win_percent)
 from analysis.game.pipeline import analyze_game
 from analysis.game.summary import compact_summary
-from analysis.game.performance import refresh_performance
+from analysis.accuracy.performance import refresh_performance
 from coach.report_performance import insert_performance_snapshot, performance_table
 from coach.report_output import ReportGate
-from tests.coach.fixtures import FakeEngines, ScriptedCodex
+from tests.coach.fixtures import FakeAnalysisSession, ScriptedCodex
 
 
 class AccuracyTests(unittest.TestCase):
@@ -116,10 +117,10 @@ class AccuracyTests(unittest.TestCase):
 
 class PerformanceIntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.engines = FakeEngines()
-        self.addCleanup(self.engines._temp.cleanup)
+        self.session = FakeAnalysisSession()
+        self.addCleanup(self.session._temp.cleanup)
         game = chess.pgn.read_game(io.StringIO('[White "Test White"]\n[Black "Test Black"]\n\n1. e4 e5 2. Nf3 Nc6 *'))
-        self.analysis = analyze_game(game, self.engines, 'white', 1400, progress=lambda _: None)
+        self.analysis = analyze_game(game, self.session, actual_elo=1400, progress=lambda _: None)
 
     def test_analysis_persists_shared_metric_and_summary_only_reads_it(self):
         data = self.analysis
@@ -127,7 +128,7 @@ class PerformanceIntegrationTests(unittest.TestCase):
         self.assertEqual(data['performance']['players']['white']['moves_scored'], 2)
         self.assertTrue(all('accuracy' in r and 'centipawn_loss' in r for r in data['moves']))
         before = copy.deepcopy(data)
-        self.assertEqual(compact_summary(data)['performance'], data['performance'])
+        self.assertEqual(compact_summary(data, 'white')['performance'], data['performance'])
         self.assertEqual(data, before)
         self.assertIs(refresh_performance(data), data)
         self.assertEqual(data, before)
@@ -139,20 +140,33 @@ class PerformanceIntegrationTests(unittest.TestCase):
         first['flags'] = ['sacrifice', 'mistake', 'natural_but_bad']
         first['played']['eval'] = 20  # Must use the next root, not this shallow candidate score.
         data['moves'][1]['position_eval'] = -9
-        original = copy.deepcopy(data['played_elo'])
-        sf, maia = len(self.engines.sf_calls), len(self.engines.human_calls)
+        original = copy.deepcopy(data['accuracy_curve'])
+        sf, maia = len(self.session.sf_calls), len(self.session.human_calls)
         refresh_performance(data)
         self.assertIn('blunder', first['flags'])
         self.assertIn('sacrifice', first['flags'])
         self.assertNotIn('mistake', first['flags'])
         self.assertEqual(first['centipawn_loss'], 915)
-        self.assertEqual(data['played_elo'], original)
-        self.assertEqual((len(self.engines.sf_calls), len(self.engines.human_calls)), (sf, maia))
+        self.assertEqual(data['accuracy_curve'], original)
+        self.assertEqual((len(self.session.sf_calls), len(self.session.human_calls)), (sf, maia))
         for side in ('white', 'black'):
             player = data['performance']['players'][side]
             rows = [r for r in data['moves'] if r['side'] == side]
             for field, flag in [('inaccuracies','inaccuracy'), ('mistakes','mistake'), ('blunders','blunder')]:
                 self.assertEqual(player[field], sum(flag in r['flags'] for r in rows))
+
+    def test_cached_statistics_refresh_current_names_without_recalculating_metrics(self):
+        data = self.analysis
+        original = copy.deepcopy(data['performance'])
+        data['game']['white']['name'] = 'Current White'
+        data['game']['black']['name'] = 'Current Black'
+        with patch('analysis.accuracy.performance.game_accuracy', side_effect=AssertionError('Use cached metrics')):
+            refresh_performance(data)
+        for side in ('white', 'black'):
+            player = data['performance']['players'][side]
+            self.assertEqual(player['name'], 'Current '+side.title())
+            self.assertEqual({key: value for key, value in player.items() if key != 'name'},
+                             {key: value for key, value in original['players'][side].items() if key != 'name'})
 
     def test_reference_evals_flow_through_saved_analysis_and_snapshot(self):
         fixture = json.loads(Path(__file__).with_name('data').joinpath('game2-lichess-accuracy.json').read_text(encoding='utf-8'))
@@ -176,28 +190,31 @@ class PerformanceIntegrationTests(unittest.TestCase):
                 self.assertEqual(round_percent(actual['phases'][phase]), expected[phase])
             for kind in ('inaccuracies', 'mistakes', 'blunders'):
                 self.assertEqual(actual[kind], expected[kind])
-        self.assertIn('| Accuracy | 83% | 86% |', performance_table(data['performance']))
+        self.assertIn('| Lichess accuracy | 83% | 86% |', performance_table(data['performance'], data['game']))
 
     def test_custom_fen_uses_actual_initial_eval(self):
         game = chess.pgn.read_game(io.StringIO('[SetUp "1"]\n[FEN "8/8/8/5k2/8/8/P7/K7 w - - 0 1"]\n\n1. a3 *'))
-        engines = FakeEngines(game.board().fen())
-        self.addCleanup(engines._temp.cleanup)
-        data = analyze_game(game, engines, 'white', 1400, progress=lambda _: None)
+        session = FakeAnalysisSession(game.board().fen())
+        self.addCleanup(session._temp.cleanup)
+        data = analyze_game(game, session, actual_elo=1400, progress=lambda _: None)
         self.assertEqual(data['performance']['initial_cp'], 20)
         self.assertEqual(data['moves'][0]['stage'], 'endgame')
 
     def test_snapshot_rendering_is_idempotent_and_escapes_names(self):
         data = self.analysis
-        data['performance']['players']['white']['name'] = 'A|B\n<script>'
-        draft = '# Review\n\n## Performance snapshot\n<!-- performance-statistics -->\nActual Elo 1400.\n\n## Opening\nBody'
+        data['game']['white']['name'] = 'A|B\n<script>'
+        draft = '# Review\n\n## Performance snapshot\nActual Elo 1400.\n\n## Opening\nBody'
         rendered = insert_performance_snapshot(draft, data)
         self.assertEqual(insert_performance_snapshot(rendered, data), rendered)
+        self.assertNotIn('<!--', rendered)
         self.assertIn('A\\|B &lt;script&gt;', rendered)
-        self.assertEqual(rendered.count('| Accuracy |'), 1)
+        self.assertEqual(rendered.count('| Lichess accuracy |'), 1)
+        self.assertEqual(rendered.count('| Arithmetic average accuracy |'), 1)
+        self.assertNotIn('Maia accuracy curve:', rendered)
         self.assertIn('Actual Elo 1400.', rendered)
         self.assertEqual(insert_performance_snapshot('# Small review\nOne position.', data), '# Small review\nOne position.')
         fallback = insert_performance_snapshot('## Ratings\nActual Elo 1400.\n## Opening', data)
-        self.assertLess(fallback.index('| Accuracy |'), fallback.index('## Opening'))
+        self.assertLess(fallback.index('| Lichess accuracy |'), fallback.index('## Opening'))
 
     def test_report_gate_publishes_the_exact_local_table_without_a_model_repair(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -206,20 +223,53 @@ class PerformanceIntegrationTests(unittest.TestCase):
             draft = '## Performance snapshot\nActual Elo 1400.\n\n## Opening\nBody'
             self.assertTrue(gate.validate(draft))
             report = gate.publish(draft)
-            self.assertIn(performance_table(self.analysis['performance']), report)
+            self.assertNotIn('<!--', report)
+            self.assertIn(performance_table(self.analysis['performance'], self.analysis['game'], self.analysis['accuracy_curve']), report)
             self.assertEqual(gate.attempts, 1)
             self.assertEqual((Path(tmp)/'coaching.md').read_text(encoding='utf-8').strip(), report)
+
+    def test_snapshot_is_table_only_and_shows_incomplete_statistics(self):
+        data = self.analysis
+        complete = performance_table(data['performance'], data['game'], data['accuracy_curve'])
+        self.assertNotIn('| Moves analyzed |', complete)
+        data['performance']['players']['white']['moves_scored'] = 1
+        data['performance']['players']['white']['phases']['endgame'] = None
+        data['performance']['players']['black']['phases']['endgame'] = None
+        partial = performance_table(data['performance'], data['game'], data['accuracy_curve'])
+        self.assertIn('| Moves analyzed | 1 / 2 | 2 / 2 |', partial)
+        self.assertIn('| Endgame | — | — |', partial)
+        self.assertTrue(all(line.startswith('|') and line.endswith('|') for line in partial.splitlines()))
+        report = insert_performance_snapshot('## Performance snapshot\n\n## Opening\nChess lesson.', data)
+        self.assertEqual(insert_performance_snapshot(report, data), report)
+        self.assertIn('## Opening\nChess lesson.', report)
+
+    def test_snapshot_uses_game_names_without_header_or_statistics_fallback(self):
+        self.analysis['headers']['White'] = 'Raw header name'
+        self.analysis['performance']['players']['white']['name'] = 'Cached metric name'
+        self.analysis['game']['white']['name'] = 'Game name'
+        self.analysis['game']['black']['name'] = None
+        report = insert_performance_snapshot('## Performance snapshot\n', self.analysis)
+        self.assertIn('Game name (White)', report)
+        self.assertIn('Black (Black)', report)
+        self.assertNotIn('Raw header name', report)
+        self.assertNotIn('Cached metric name', report)
+        self.assertNotIn('Test Black', report)
 
     def test_normal_agent_run_contains_the_table_and_saves_upgraded_analysis(self):
         del self.analysis['performance']
         model = ScriptedCodex()
         model.index = 5
         with tempfile.TemporaryDirectory() as tmp:
-            report = model.run(self.analysis, self.engines, Path(tmp))
+            report = model.run(self.analysis, self.session, Path(tmp), side='white')
             self.assertIn('| Average centipawn loss |', report)
-            self.assertIn('| Accuracy |', report)
+            self.assertIn('| Lichess accuracy |', report)
             saved = json.loads((Path(tmp)/'analysis.json').read_text(encoding='utf-8'))
-            self.assertEqual(saved['performance'], self.analysis['performance'])
+            self.assertEqual(saved['performance']['players'], self.analysis['performance']['players'])
+            self.assertNotIn('version', saved['performance'])
+            self.assertNotIn('rating_context_signature', saved['performance'])
+            self.assertNotIn('schema_version', saved)
+            self.assertEqual(saved['moves'], self.analysis['moves'])
+            self.assertNotIn('positions', saved)
 
 
 if __name__ == '__main__':

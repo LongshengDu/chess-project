@@ -93,7 +93,7 @@ function analysisAdapters() {
       const playCode = transformPlaySource(code,normalizePath(id),local);
       if (playCode !== undefined) return playCode;
       if (normalizePath(id).endsWith('/pages/analysis/[...id].tsx')) {
-        // Python accepts full PGN variations; upstream's legacy backend flattened them.
+        // Preserve full PGN variations for the Python backend.
         return patch(
           patch(code, 'normalizeCustomPgnForBackendStore(data)', 'data'),
           '<MovesByRating', '<MovesByRating positionKey={controller.currentNode?.fen}',
@@ -123,6 +123,11 @@ function analysisAdapters() {
           '    enableEngineAnalysis && !deepAnalysisController.progress.isAnalyzing,');
       }
       if (normalizePath(id).endsWith('/useAnalysisController/useEngineAnalysis.ts')) {
+        code = `import { positionHistory } from ${JSON.stringify(local('./src/adapters/engine-history.js'))};\n` + code;
+        code = patch(code, '      MAIA_RATINGS,\n      MAIA_RATINGS,',
+          '      MAIA_RATINGS,\n      MAIA_RATINGS,\n      positionHistory(currentNode),');
+        code = patch(code, '          maiaCandidateMoves,',
+          '          history: positionHistory(currentNode),\n          maiaCandidateMoves,');
         code = code.replaceAll('if (!currentNode || !enabled) return',
           'if (!currentNode || !enabled || maia.profiling) return');
         // Wait for candidate probabilities once instead of starting Stockfish,
@@ -152,21 +157,33 @@ function analysisAdapters() {
       if (normalizePath(id) === `${root}/types/node.ts`) {
         code = patch(code, 'if (!stockfishEval || stockfishEval.depth < 12) {',
           'if (!stockfishEval || stockfishEval.depth < 12 || (stockfishEval.root_move_depth_vec?.[move] ?? stockfishEval.depth) < 12) {');
-        return patch(patch(code, 'const shouldReplaceSameDepth =',
-          'const shouldReplaceSameDepth = stockfishEval.complete === true ||'),
-          'if (existingStockfish.depth > stockfishEval.depth) {',
-          'if (existingStockfish.depth > stockfishEval.depth && !(stockfishEval.complete === true && existingStockfish.complete === false)) {');
+        // The backend selects complete observations by requested limits. A
+        // lower achieved depth must not hide its newer authoritative result.
+        return patch(code, '    if (existingStockfish) {',
+          '    if (existingStockfish && stockfishEval.complete !== true) {');
       }
       if (normalizePath(id).endsWith('/components/Analysis/AnalysisConfigModal.tsx')) {
         code = `import { StockfishEngineContext } from ${JSON.stringify(local('./src/adapters/engines.jsx'))};\n` + code;
-        code = patch(code, '  const depthOptions = [',
-          '  const { searchConfig } = React.useContext(StockfishEngineContext)\n  const bounded = searchConfig?.strategy === "bounded"\n  const budget = (depth) => searchConfig?.budgets[depth]\n  const depthOptions = [');
-        for (const [depth, name, description] of [[12,'Fast','Quick surface-level analysis'], [15,'Balanced','Deeper analysis with good speed'], [18,'Deep','Thorough analysis with slower speed']]) {
-          code = patch(code, `label: '${name} (d${depth})'`, `label: bounded ? '${name} (up to d${depth})' : '${name} (d${depth})'`);
-          code = patch(code, `description: '${description}'`, `description: bounded ? \`Up to \${budget(${depth})} \${budget(${depth}) === 1 ? 'second' : 'seconds'} of search per position\` : \`Depth target with a \${searchConfig?.max_budgets[${depth}]}-second search limit\``);
-        }
-        code = patch(code, '  ]\n\n  const handleConfirm',
-          '  ].filter(option => searchConfig?.budgets[option.value] !== undefined)\n\n  useEffect(() => {\n    if (searchConfig && searchConfig.budgets[selectedDepth] === undefined) setSelectedDepth(searchConfig.default_depth)\n  }, [searchConfig, selectedDepth])\n\n  const handleConfirm');
+        const originalOptions = code.match(/  const depthOptions = \[[\s\S]*?\n  \]/)?.[0];
+        if (!originalOptions) throw new Error(`Missing analysis preset options in ${id}`);
+        code = patch(code, originalOptions, `  const { searchConfig } = React.useContext(StockfishEngineContext)
+  const bounded = searchConfig?.strategy === "bounded"
+  const depthOptions = Object.entries(searchConfig?.budgets || {})
+    .sort(([left], [right]) => Number(left) - Number(right))
+    .map(([depth, budget], index, options) => {
+      const value = Number(depth)
+      const name = options.length === 3 ? ['Fast', 'Balanced', 'Deep'][index] + ' ' : ''
+      return {
+        value,
+        label: name + (bounded ? \`(up to d\${value})\` : \`(d\${value})\`),
+        description: bounded ? \`Up to \${budget} \${budget === 1 ? 'second' : 'seconds'} of search per position\`
+          : \`Depth target with a \${searchConfig.max_budgets[value]}-second search limit\`,
+      }
+    })
+
+  useEffect(() => {
+    if (searchConfig && searchConfig.budgets[selectedDepth] === undefined) setSelectedDepth(searchConfig.default_depth)
+  }, [searchConfig, selectedDepth])`);
         return patch(code,
           'Higher depths provide more accurate analysis but take longer to\n              complete. You can cancel the analysis at any time. Analysis will\n              persist even after you close the tab,',
           '{bounded ? "Search stops at the depth target or time budget. The actual depth reached is shown; difficult positions may finish below the target. " : "Search targets the selected depth; exceeding the maximum search time stops the run. "}\n              Completed analysis is saved locally. Keep this tab open while analysis runs.');
