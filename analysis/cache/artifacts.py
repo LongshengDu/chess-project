@@ -113,13 +113,13 @@ class AnalysisStore:
             if discover:
                 from analysis.cache.session import discover_game_evidence
                 return discover_game_evidence(game, self.positions_cache, engine_signature=engine_signature)
-            raise ValueError('No saved evidence manifest for this game; cache-only analysis cannot search for missing evidence.')
+            raise ValueError('No saved evidence manifest for this game; rebuilding from cache cannot search for missing evidence.')
         if not isinstance(manifest, dict) or not isinstance(manifest.get('positions'), list):
-            raise ValueError('Invalid saved evidence manifest; cache-only analysis cannot replace its original observations.')
+            raise ValueError('Invalid saved evidence manifest; rebuilding from cache cannot replace its original observations.')
         references = manifest['positions']
         positions = self._read_positions(document, references)
         if positions is None:
-            raise ValueError('Saved game references missing position evidence; cache-only analysis cannot run engines.')
+            raise ValueError('Saved game references missing position evidence; rebuilding from cache cannot run engines.')
         return references, positions
 
     @staticmethod

@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import chess
@@ -11,7 +12,9 @@ import chess.pgn
 
 from analysis.game.cancellation import AnalysisCancelled
 from analysis.game.pipeline import analyze_game
-from analysis.session import AnalysisSession
+from analysis.cache.artifacts import AnalysisStore
+from analysis.cache.session import CachedAnalysisSession
+from analysis.session import AnalysisSession, Limits
 from engine.stockfish_pool import StockfishPool
 from tests.coach.fixtures import FakeAnalysisSession
 
@@ -38,6 +41,59 @@ class GamePipelineTests(unittest.TestCase):
         self.assertEqual(coach['game']['rating_scale'], 'lichess_blitz')
         self.assertEqual(web['game'], coach['game'])
         self.assertTrue(all('flags' in move for move in web['moves']))
+
+    def test_configuration_is_reported_before_inference_for_each_game(self):
+        game = chess.pgn.read_game(io.StringIO('1. e4 e5 *'))
+        session = self.session(game)
+        session.engines.maia_model = 'fixture-custom-model'
+        session.engines.signature['device'] = 'cuda'
+        session.engines.analysis_pool = SimpleNamespace(threads_per_worker=3, hash_mb=96)
+        session.analysis_workers = 2
+        session.limits = Limits(depth=12, verify_ms=750, max_ms=1500)
+        original = session.human_pair_batches
+        messages = []
+
+        def infer(requests):
+            self.assertIn('model=fixture-custom-model, device=cuda', messages[0])
+            for setting in ('workers=2', 'threads_per_worker=3', 'hash_mb_per_worker=96',
+                            'depth_ceiling=12', 'search_seconds=0.75', 'max_seconds=1.5'):
+                self.assertIn(setting, messages[1])
+            return original(requests)
+
+        with patch.object(session, 'human_pair_batches', side_effect=infer):
+            for _ in range(2):
+                messages.clear()
+                analyze_game(game, session, progress=messages.append)
+
+    def test_position_progress_uses_recorded_depth_and_available_search_time(self):
+        game = chess.pgn.read_game(io.StringIO('1. e4 *'))
+        cases = (({'elapsed_seconds': 1.25, 'phases': [{'wall_ms': 10}]}, '1.250s'),
+                 ({'phases': [{'wall_ms': 125}, {'wall_ms': 250}]}, '0.375s'),
+                 ({'budget_seconds': 10}, 'unavailable'))
+        for timing, expected in cases:
+            with self.subTest(timing=timing):
+                session = self.session(game)
+                original = session.initial_analysis
+
+                def scan(*args):
+                    result = original(*args)
+                    result['search'].update(depth=13, target_depth=24, **timing)
+                    return result
+
+                messages = []
+                with patch.object(session, 'initial_analysis', side_effect=scan):
+                    analysis = analyze_game(game, session, progress=messages.append)
+                self.assertIn(f'Analyzed 1/2: 1. e4 (depth 13, search time {expected})', messages)
+
+                # Rebuilding from cache reports original timing, never new search work.
+                AnalysisStore(session.cache.directory).save(session.cache.directory / 'analysis.json', analysis)
+                cached = CachedAnalysisSession(game, session.cache.directory)
+                replayed = []
+                with patch('engine.runtime.EngineRuntime.__init__', side_effect=AssertionError('No engines')):
+                    analyze_game(game, cached, progress=replayed.append)
+                self.assertEqual(replayed[0], 'Analysis: rebuilding from cache; Maia and Stockfish disabled.')
+                self.assertEqual([line for line in messages if line.startswith('Analyzed ')],
+                                 [line for line in replayed if line.startswith('Analyzed ')])
 
     def test_out_of_order_callbacks_publish_complete_maps_and_preserve_saved_order(self):
         game = chess.pgn.read_game(io.StringIO('1. e4 e5 *'))

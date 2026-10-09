@@ -50,10 +50,10 @@ uv run python coach/coach.py game.pgn --side white
 uv run python coach/coach.py game.pgn --side white --coach-only
 
 # Rebuild saved analysis strictly from its original cache, without engines.
-uv run python coach/coach.py game.pgn --analysis-only --cache-only
+uv run python coach/coach.py game.pgn --analysis-only --rebuild-from-cache
 ```
 
-Normal analysis reuses matching cached evidence and computes missing requests. `--cache-only` stops if saved evidence is missing. `--coach-only` skips the full-game pass, but coaching tools can investigate new positions. Add `--refresh-cache` only when you explicitly want fresh engine measurements; it cannot be combined with `--cache-only` or `--coach-only`.
+Normal analysis reuses matching cached evidence and computes missing requests. `--rebuild-from-cache` regenerates analysis from saved measurements without engines and stops if required evidence is missing. `--coach-only` skips the full-game pass, but coaching tools can investigate new positions. Add `--refresh-cache` only when you explicitly want fresh engine measurements; it cannot be combined with `--rebuild-from-cache` or `--coach-only`.
 
 Without rating flags, the CLI uses PGN `WhiteElo`, `BlackElo`, `Site` and `TimeControl`. To override both players' ratings, supply `--elo 1600 --rating-scale lichess_blitz` together. Supported scales are `lichess_blitz`, `lichess_rapid`, `chess_com_blitz` and `chess_com_rapid` (aliases `lb`, `lr`, `cb`, `cr`). Missing or invalid rating context stops the run and asks for both flags. The original PGN headers are preserved, and the same analysis can coach either side.
 
@@ -117,4 +117,4 @@ Accuracy curves describe expected move quality at Maia's native Lichess Blitz an
 
 Caches, web history and generated reports are separate. Interactive analysis, full-game analysis and coaching reuse compatible position evidence; saved games retain references to their original measurements. See the [analysis development guide](analysis/README.md) for the cache and saved-data contracts.
 
-Stockfish reuse compares requested depth and time, not achieved depth. A compatible complete result covers a request when both limits are at least as large. Otherwise, the next search keeps the maximum of each limit and includes all required candidates. Engine identity, search strategy and relevant history must match. Cache-only runs stop on missing evidence; they never start engines.
+Stockfish reuse compares requested depth and time, not achieved depth. A compatible complete result covers a request when both limits are at least as large. Otherwise, the next search keeps the maximum of each limit and includes all required candidates. Engine identity, search strategy and relevant history must match. Runs with `--rebuild-from-cache` stop on missing evidence; they never start engines.

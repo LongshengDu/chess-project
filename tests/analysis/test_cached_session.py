@@ -44,7 +44,7 @@ class CachedSessionTests(unittest.TestCase):
         self.assertNotIn('positions', document)
         self.assertNotIn('position_references', document)
 
-    def test_cache_only_keeps_original_measurement_after_request_is_refreshed(self):
+    def test_rebuild_from_cache_keeps_original_measurement_after_request_is_refreshed(self):
         board = self.game.board()
         record = self.session.cache.records(board, 'stockfish')[0]
         changed = dict(record['result'], elapsed_seconds=987)
@@ -131,7 +131,7 @@ class CachedSessionTests(unittest.TestCase):
     def test_cli_uses_engine_free_session_and_rejects_conflicting_modes(self):
         pgn = self.directory/'game.pgn'
         pgn.write_text(str(self.game), encoding='utf-8')
-        args = [str(pgn), '--analysis-only', '--cache-only', '--cache-dir', str(self.directory),
+        args = [str(pgn), '--analysis-only', '--rebuild-from-cache', '--cache-dir', str(self.directory),
                 '--output-dir', str(self.directory/'output')]
         with patch('coach.coach.AnalysisSession', side_effect=AssertionError('engine startup')), \
                 patch('analysis.accuracy.figures.export_saved_figures'):

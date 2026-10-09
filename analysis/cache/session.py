@@ -73,7 +73,7 @@ def discover_game_evidence(game, cache, *, engine_signature=None):
         for index in required:
             complete = {profile for profile, values in by_position[index].items() if keys <= values.keys()}
             if not complete:
-                raise ValueError(f'Missing complete saved {namespace} evidence at ply {index + 1}; cache-only analysis cannot search.')
+                raise ValueError(f'Missing complete saved {namespace} evidence at ply {index + 1}; rebuilding from cache cannot search.')
             common = complete if common is None else common & complete
         expected = identity(maia_signature(engine_signature) if namespace == 'maia' else stockfish_signature(engine_signature))
         if not required:
@@ -88,7 +88,7 @@ def discover_game_evidence(game, cache, *, engine_signature=None):
             elif len(common) == 1:
                 selected[namespace] = next(iter(common))
             elif not common:
-                raise ValueError(f'No coherent saved {namespace} profile covers the game; cache-only analysis cannot mix engine/search profiles.')
+                raise ValueError(f'No coherent saved {namespace} profile covers the game; rebuilding from cache cannot mix engine/search profiles.')
             else:
                 raise ValueError(f'Ambiguous saved {namespace} profiles; no unique complete profile identifies which observations to use.')
 
@@ -138,14 +138,14 @@ class CachedAnalysisSession:
                 for rating in RATINGS:
                     prediction = position['maia'].get(f'maia_kdd_{rating}')
                     if prediction is None:
-                        raise ValueError(f'Missing saved Maia rating pair {rating}/{rating} at ply {index + 1}; cache-only analysis cannot infer it.')
+                        raise ValueError(f'Missing saved Maia rating pair {rating}/{rating} at ply {index + 1}; rebuilding from cache cannot infer it.')
                     validate_maia_prediction(board, prediction)
             result = position['stockfish']
             if result is None:
-                raise ValueError('Cache-only analysis requires Stockfish evidence for every played position.')
+                raise ValueError('Rebuilding from cache requires Stockfish evidence for every played position.')
             legal = {candidate.uci() for candidate in board.legal_moves}
             if not result.get('complete') or not result.get('coverage_complete') or set(result.get('cp_vec', {})) != legal:
-                raise ValueError(f'Saved Stockfish evidence at ply {index + 1} is incomplete; cache-only analysis cannot search missing moves.')
+                raise ValueError(f'Saved Stockfish evidence at ply {index + 1} is incomplete; rebuilding from cache cannot search missing moves.')
             board.push_uci(move)
 
     def __enter__(self):
@@ -162,7 +162,7 @@ class CachedAnalysisSession:
         index = len(history)
         if (board.root().fen() != self.start_fen or index > len(self._moves)
                 or history != self._moves[:index]):
-            raise ValueError('Cache-only session requires the saved game\'s exact position history.')
+            raise ValueError('Rebuilding from cache requires the saved game\'s exact position history.')
         return index
 
     def human_pair_batches(self, requests):
@@ -174,10 +174,10 @@ class CachedAnalysisSession:
             for own, other in zip(ratings, opponents, strict=True):
                 key = f'maia_kdd_{own}'
                 if own != other:
-                    raise ValueError(f'Missing saved Maia rating pair {own}/{other}; cache-only analysis cannot infer it.')
+                    raise ValueError(f'Missing saved Maia rating pair {own}/{other}; rebuilding from cache cannot infer it.')
                 value = position['maia'].get(key)
                 if value is None and index < len(self._moves) and board.legal_moves.count() != 1:
-                    raise ValueError(f'Missing saved Maia rating pair {own}/{other}; cache-only analysis cannot infer it.')
+                    raise ValueError(f'Missing saved Maia rating pair {own}/{other}; rebuilding from cache cannot infer it.')
                 # A forced move needs no prediction for its deterministic policy.
                 # The final board also contributes no played decision. Keep both
                 # absences explicit instead of manufacturing engine observations.
@@ -192,13 +192,13 @@ class CachedAnalysisSession:
         result = self._positions[index]['stockfish']
         if result is None:
             if index < len(self._moves):
-                raise ValueError('Cache-only analysis requires Stockfish evidence for every played position.')
+                raise ValueError('Rebuilding from cache requires Stockfish evidence for every played position.')
             return None
         legal = set() if board.is_game_over(claim_draw=False) else {move.uci() for move in board.legal_moves}
         if (not result.get('complete') or not result.get('coverage_complete')
                 or set(result.get('cp_vec', {})) != legal):
             raise ValueError(f'Saved Stockfish evidence at ply {index + 1} is incomplete; '
-                             'cache-only analysis cannot search missing moves.')
+                             'rebuilding from cache cannot search missing moves.')
         self.stats['stockfish_cache_hits'] += 1
         return stockfish_scan(board, copy.deepcopy(result))
 
@@ -210,5 +210,5 @@ class CachedAnalysisSession:
 
     def position_references(self, boards, ratings):
         if [self._index(board) for board in boards] != list(range(len(self._positions))):
-            raise ValueError('Cache-only analysis must retain the complete saved game.')
+            raise ValueError('Rebuilding from cache must retain the complete saved game.')
         return copy.deepcopy(self._references)

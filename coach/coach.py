@@ -59,7 +59,7 @@ def parser():
     cli.add_argument('--refresh-cache', action='store_true',
                      help='Recompute requested Maia/Stockfish evidence and replace its cache entries; '
                           'preserve unrelated evidence. Cannot be combined with --coach-only.')
-    cli.add_argument('--cache-only', action='store_true',
+    cli.add_argument('--rebuild-from-cache', action='store_true',
                      help='Rebuild --analysis-only from the saved game\'s original cached measurements. '
                           'Never load engines or calculate misses; incompatible with --refresh-cache.')
     modes = cli.add_mutually_exclusive_group()
@@ -109,8 +109,8 @@ def main(argv=None):
             raise ValueError('Provide --side white or --side black to select the player to coach.')
         if args.coach_only and args.refresh_cache:
             raise ValueError('--refresh-cache requires game analysis; omit --coach-only or use --analysis-only.')
-        if args.cache_only and (not args.analysis_only or args.refresh_cache):
-            raise ValueError('--cache-only requires --analysis-only and cannot be combined with --refresh-cache.')
+        if args.rebuild_from_cache and (not args.analysis_only or args.refresh_cache):
+            raise ValueError('--rebuild-from-cache requires --analysis-only and cannot be combined with --refresh-cache.')
         if (args.elo is None) != (args.rating_scale is None):
             raise ValueError('Provide --elo and --rating-scale together, or omit both to use PGN WhiteElo/BlackElo, Site and TimeControl.')
         if args.elo is not None and not 100 <= args.elo <= 4000:
@@ -145,7 +145,7 @@ def main(argv=None):
             from analysis.accuracy.service import refresh_saved_curve
             refresh_saved_curve(analysis, output_dir=output)
             store.save(output/'analysis.json', analysis)
-        if args.cache_only:
+        if args.rebuild_from_cache:
             from analysis.cache.session import CachedAnalysisSession
             print('Rebuilding analysis from saved measurements; engines disabled.', flush=True)
             context = CachedAnalysisSession(game, args.cache_dir)

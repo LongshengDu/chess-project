@@ -62,17 +62,17 @@ class BatchPreflightTests(unittest.TestCase):
         self.store.save(self.output(self.paths[1]) / 'analysis.json', analysis)
         before = self.snapshot()
         with self.assertRaisesRegex(ValueError, 'game1.pgn: Missing saved Maia rating pair 600/600'):
-            batch.run(self.paths, self.timing, cache_only=True, replace_output=True)
+            batch.run(self.paths, self.timing, rebuild_from_cache=True, replace_output=True)
         self.assertEqual(before, self.snapshot())
         self.assertFalse(self.timing.parent.exists())
 
-    def test_cache_only_reuses_preflight_sessions_and_preserves_other_files(self):
+    def test_rebuild_from_cache_reuses_preflight_sessions_and_preserves_other_files(self):
         preserved = self.output(self.paths[0]) / 'coaching.md'
         preserved.write_text('Accepted report', encoding='utf-8')
         cached = batch.CachedAnalysisSession
         with patch.object(batch, 'CachedAnalysisSession', wraps=cached) as sessions, \
                 patch('analysis.accuracy.figures.export_saved_figures'):
-            result = batch.run(self.paths, self.timing, cache_only=True, replace_output=True)
+            result = batch.run(self.paths, self.timing, rebuild_from_cache=True, replace_output=True)
         self.assertEqual(sessions.call_count, len(self.paths))
         self.assertEqual(len(result['games']), 2)
         self.assertTrue(result['engines_closed'])
@@ -85,7 +85,7 @@ class BatchPreflightTests(unittest.TestCase):
     def test_existing_outputs_require_explicit_replacement(self):
         before = self.snapshot()
         with self.assertRaises(FileExistsError):
-            batch.run(self.paths, self.timing, cache_only=True)
+            batch.run(self.paths, self.timing, rebuild_from_cache=True)
         self.assertEqual(before, self.snapshot())
 
     def test_multiple_games_are_rejected_before_cache_or_outputs(self):

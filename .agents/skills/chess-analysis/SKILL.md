@@ -11,7 +11,7 @@ Apply [project conventions](../project-development/SKILL.md). Read [analysis/REA
 
 - **Do not refresh the analysis cache unless the user explicitly requests it.** Reuse existing compatible evidence by default. Repeating analysis, regenerating outputs or changing documentation does not authorize cache bypass or deletion.
 - Use `--refresh-cache` only for an explicit refresh request. Preserve unrelated evidence and user data.
-- When the user requires existing evidence only or forbids new searches, use `--analysis-only --cache-only` (batch: `--cache-only`). Missing evidence must stop the run rather than start engines. Ordinary analysis may calculate missing or incompatible requests; distinguish this from refreshing cached results.
+- When the user requires existing evidence only or forbids new searches, use `--analysis-only --rebuild-from-cache` (batch: `--rebuild-from-cache`). Missing evidence must stop the run rather than start engines. Ordinary analysis may calculate missing or incompatible requests; distinguish this from refreshing cached results.
 - Run only the requested games and workflow. Analysis does not implicitly authorize coaching or a collection-wide rerun.
 
 ## Development

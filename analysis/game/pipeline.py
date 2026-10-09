@@ -56,6 +56,7 @@ class GameAnalyzer:
 
         self._check_cancelled()
         self._positions()
+        self._report_configuration()
         self.progress(f'Maia accuracy evidence: {len(self.boards)} positions, equal-rating profiles from 600–2600 Lichess Blitz.')
         self._prepare_maia()
         prepare_game_policies(self.game, self.rows, self.predictions[:-1])
@@ -72,8 +73,17 @@ class GameAnalyzer:
                 if self.on_position:
                     self.on_position(index, self.positions[index])
                 label = self.rows[index]['label'] if index < len(self.rows) else 'final position'
-                self.progress(f'Analyzed {completed}/{len(self.boards)}: {label}' if scan is not None else
-                              f'Prepared {completed}/{len(self.boards)}: {label} (unscored)')
+                if scan is None:
+                    self.progress(f'Prepared {completed}/{len(self.boards)}: {label} (unscored)')
+                else:
+                    result = self.positions[index]['stockfish']
+                    seconds = result.get('elapsed_seconds')
+                    phases = result.get('phases', [])
+                    if seconds is None and phases and all('wall_ms' in phase for phase in phases):
+                        seconds = sum(phase['wall_ms'] for phase in phases) / 1000
+                    duration = 'unavailable' if seconds is None else f'{seconds:.3f}s'
+                    self.progress(f'Analyzed {completed}/{len(self.boards)}: {label} '
+                                  f'(depth {result["depth"]}, search time {duration})')
         finally:
             scans.close()
         self._check_cancelled()
@@ -108,6 +118,24 @@ class GameAnalyzer:
         if record:
             record('game_analysis_completed', wall_ms=(time.perf_counter()-started)*1000)
         return result
+
+    def _report_configuration(self):
+        engines = getattr(self.session, 'engines', None)
+        if engines is None:
+            self.progress('Analysis: rebuilding from cache; Maia and Stockfish disabled.')
+            return
+        device = (engines.signature or {}).get('device', 'unavailable')
+        self.progress(f'Maia: model={engines.maia_model}, device={device}, '
+                      f'batch_size={CONFIG["MAIA"]["BATCH_SIZE"]}.')
+        resources = engines.analysis_pool if engines.analysis_pool is not None else engines
+        workers = min(self.session.analysis_workers, len(self.boards))
+        limits = self.session.limits
+        search_ms = limits.verify_ms if limits.analysis_strategy == 'bounded' else limits.max_ms
+        self.progress(f'Stockfish: workers={workers}, '
+                      f'threads_per_worker={resources.threads_per_worker}, '
+                      f'hash_mb_per_worker={resources.hash_mb}, strategy={limits.analysis_strategy}, '
+                      f'depth_ceiling={limits.depth}, search_seconds={search_ms / 1000:g}, '
+                      f'max_seconds={limits.max_ms / 1000:g}.')
 
     def _check_cancelled(self):
         if self.cancel is not None and self.cancel.is_set():

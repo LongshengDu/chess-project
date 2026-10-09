@@ -16,7 +16,9 @@ from analysis.game.cancellation import AnalysisCancelled
 class FakeAnalysisSession(AnalysisSession):
     def __init__(self, start_fen=chess.STARTING_FEN, *, cache_directory=None):
         self.start_fen, self.limits, self.stats = start_fen, Limits(), {}
-        self.engines = SimpleNamespace(signature={'test': True})
+        self.engines = SimpleNamespace(signature={'test': True}, maia_model='fixture',
+            stockfish_path='unused', analysis_pool=None, threads_per_worker=1, hash_mb=16)
+        self.analysis_workers = 1
         self.human_calls, self.sf_calls, self.pair_calls = [], [], []
         self._temp = tempfile.TemporaryDirectory()
         self.cache = PositionCache(self._temp.name if cache_directory is None else cache_directory)

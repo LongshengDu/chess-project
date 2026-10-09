@@ -45,11 +45,11 @@ ANALYSIS:
   STOCKFISH_EVALUATION:
     MAX_DEPTH: 24
     DEFAULT_SEARCH_SECONDS: 10.0  # Per search, or shared across a position's bounded analysis phases
-    MAX_SEARCH_SECONDS: 30.0  # Largest requested search budget; not a whole-game timeout
+    MAX_SEARCH_SECONDS: 20.0  # Largest requested search budget; not a whole-game timeout
   # Fast principal-variation previews after a candidate move in the web analysis.
   STOCKFISH_EXPLORATION:
     MAX_DEPTH: 18
-    DEFAULT_SEARCH_SECONDS: 2.0  # Normal limit for ONE exploration search
+    DEFAULT_SEARCH_SECONDS: 3.0  # Normal limit for ONE exploration search
     MAX_SEARCH_SECONDS: 10.0  # Ceiling for a longer requested search
   PROFILER_DIR: null  # Optional browser profiler output directory
 

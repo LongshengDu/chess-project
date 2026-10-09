@@ -23,7 +23,7 @@ from analysis.game.study import load_game
 from analysis.settings import CONFIG
 
 
-def run(paths, timing_output, *, replace_output=False, cache_only=False, check_cache=False,
+def run(paths, timing_output, *, replace_output=False, rebuild_from_cache=False, check_cache=False,
         engine_signature=None):
     prepared = []
     for path in paths:
@@ -39,7 +39,7 @@ def run(paths, timing_output, *, replace_output=False, cache_only=False, check_c
     # Resolve and validate every game's complete evidence before touching any
     # output. Reuse these pinned sessions so reconstruction cannot switch heads.
     cached_sessions = []
-    if cache_only or check_cache:
+    if rebuild_from_cache or check_cache:
         for path, game, _ in prepared:
             try:
                 cached_sessions.append(CachedAnalysisSession(game, CONFIG['ANALYSIS']['CACHE_DIR'],
@@ -56,13 +56,13 @@ def run(paths, timing_output, *, replace_output=False, cache_only=False, check_c
               'analysis_config': json.loads(json.dumps(CONFIG['ANALYSIS'], default=str)),
               'maia_config': json.loads(json.dumps(CONFIG['MAIA'], default=str)),
               'cache': str(Path(CONFIG['ANALYSIS']['CACHE_DIR']).resolve()), 'games': [],
-              'cache_only': cache_only,
+              'cache_only': rebuild_from_cache,
               'engines_closed': False}
     start = time.perf_counter()
     store = AnalysisStore(CONFIG['ANALYSIS']['CACHE_DIR'])
     try:
         with ExitStack() as contexts:
-            if cache_only:
+            if rebuild_from_cache:
                 print('Rebuilding saved observations only; engines disabled.', flush=True)
                 record['engine_load_seconds'] = 0.
                 shared_session = None
@@ -75,7 +75,7 @@ def run(paths, timing_output, *, replace_output=False, cache_only=False, check_c
                 record['maia_device'] = str(shared_session.engines.signature['device'])
                 print(f'Maia device: {record["maia_device"]}', flush=True)
             for index, (path, game, output) in enumerate(prepared):
-                session = cached_sessions[index] if cache_only else shared_session
+                session = cached_sessions[index] if rebuild_from_cache else shared_session
                 began = time.perf_counter()
                 previous = began
                 before = session.stats.copy()
@@ -120,10 +120,10 @@ if __name__ == '__main__':
                      default=Path(__file__).resolve().parent/'output/full-analysis-batch/run.json')
     cli.add_argument('--replace-output', action='store_true',
                      help='Replace generated analysis and plots using the existing cache; preserve other files.')
-    cli.add_argument('--cache-only', action='store_true',
+    cli.add_argument('--rebuild-from-cache', action='store_true',
                      help='Rebuild from saved game measurements only; fail on missing evidence and never load engines.')
     cli.add_argument('--check-cache', action='store_true',
                      help='Validate every game against saved evidence without engines, output changes or timing files.')
     args = cli.parse_args()
-    run(args.pgn, args.timing_output, replace_output=args.replace_output, cache_only=args.cache_only,
+    run(args.pgn, args.timing_output, replace_output=args.replace_output, rebuild_from_cache=args.rebuild_from_cache,
         check_cache=args.check_cache)
